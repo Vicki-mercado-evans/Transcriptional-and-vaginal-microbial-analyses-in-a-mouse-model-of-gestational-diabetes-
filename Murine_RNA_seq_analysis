@@ -1,0 +1,747 @@
+# Install packages needed 
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.16")
+BiocManager::install("limma")
+BiocManager::install("pcaExplorer")
+BiocManager::install("Glimma")
+BiocManager::install("DESeq2")
+
+library( "DESeq2" )
+library(dplyr)
+library(ashr)
+browseVignettes("DESeq2")
+
+####Part 1: Generating a normalized read count file from raw read counts with gene names, and creating results from DESeq2 package
+
+#Load raw read count file from MiGS/SeqCenter
+GDM_murine_data <- read.csv("murine_counts.csv", header = T, row.names = 1)
+View(GDM_murine_data)
+
+Coldata<-read.csv("coldata.csv", header=T,)
+
+rownames(Coldata)<-Coldata$run
+
+#Transform Subread feature count file so that its suitable for DESeq2 & create metadata file
+Murinecountdata <- as.data.frame(GDM_murine_data)
+metadata <- as.data.frame(Coldata)
+
+#make sure that the column names of count data are the same as IDS from metadata (ColData) file
+head(Murinecountdata)
+head(metadata)
+names(Murinecountdata) [-1]
+metadata$ID
+all(names(Murinecountdata)==metadata$ID)
+
+#create DESeq data matrix 
+ddsM <- DESeqDataSetFromMatrix(countData = Murinecountdata,
+                              colData = metadata,
+                              design = ~Treatment)
+
+#run DESeq2 on all samples: the program includes library size normalization
+ddsDEM <- DESeq(ddsM, minReplicatesForReplace=Inf)  
+
+replaceOutliersWithTrimmedMean( ddsDEM, trim = 0.1, minReplicates = 3 )
+
+#export normalized read count
+normCountsMurine <- counts(ddsDEM, normalized = T)
+View(normCountsMurine)
+
+write.csv(normCountsMurine, "Normalized.Murinecounts.GDMvControls.csv")
+
+#export normalized read count one more time to double check annotation and ranking output 6.26.23
+normCountsMurine2 <- counts(ddsDEM, normalized= T) 
+write.csv(normCountsMurine2, "Normalized.Murinecounts2.csv")
+
+ddsM <- estimateSizeFactors(ddsM)
+normCountsMurine3 <- counts(ddsM, normalized= TRUE)
+write.csv(normCountsMurine3, "Normalized.Murinecounts3.csv")
+
+#Now let's pull out only significant DEGs that have a corrected p-value of < 0.05 (default is 0.1)
+#for GDM uterine vs. control uterine
+res_murine_GDMvcontrol_uterus_sig <- results(ddsDEM, contrast=c("Treatment", "GDM uterine","Control uterine"), alpha = 0.05, lfcThreshold = 1) 
+summary(res_murine_GDMvcontrol_uterus_sig)
+
+write.csv(as.data.frame(res_murine_GDMvcontrol_uterus_sig), 
+          file="murine_GDMvcontrol_uterus_sig.csv")
+
+res_murine_GDMvcontrol_uterus <- results(ddsDEM, contrast=c("Treatment", "GDM uterine","Control uterine"), lfcThreshold = 1,  alpha = 0.05, cooksCutoff=FALSE, tidy = TRUE)
+write.csv(as.data.frame(res_murine_GDMvcontrol_uterus), 
+          file="murine_GDMvcontrol_uterus.csv")
+
+#log fold change shrinkage for visualization (volcano plots)
+res_murine_GDMvcontrol_uterus_lfc <- lfcShrink(ddsDEM,
+                                             contrast = c('Treatment','GDM uterine','Control uterine'), type = "normal")
+
+resultsNames(ddsDEM)
+
+res_murine_GDMvcontrol_uterus_lfc2 <- lfcShrink(ddsDEM, coef="Treatment_GDM.uterine_vs_Control.uterine", type="apeglm")
+
+rownames(ddsDEM)
+
+write.csv(as.data.frame(res_murine_GDMvcontrol_uterus_lfc), 
+          file="murine_GDMvcontrol_uterus_9DEGslfcshrink.csv")
+
+res_murine_GDMvcontrol_vagina_lfc <- lfcShrink(ddsDEM,
+                                               contrast = c('Treatment','GDM vaginal','Control vaginal'), type = 'normal')
+
+res_murine_GDMvcontrol_vagina_lfc2 <- lfcShrink(ddsDEM, coef="Treatment_GDM.vaginal_vs_Control.vaginal", type="apeglm")
+
+#for GDM vaginal vs control vaginal
+res05_murine_GDMvcontrol_vagina <- results(ddsDEM, contrast=c("Treatment", "GDM vaginal","Control vaginal"), alpha = 0.05, lfcThreshold = 1, cooksCutoff=FALSE, tidy = TRUE)
+print (res05_murine_GDMvcontrol_vagina)
+
+write.csv(as.data.frame(res05_murine_GDMvcontrol_vagina), 
+          file="murine_GDMvcontrol_vagina.csv")
+
+res_murine_GDMvcontrol_vaginal <- results(ddsDEM, contrast=c("Treatment", "GDM vaginal","Control vaginal"), lfcThreshold = 1,  alpha = 0.05, cooksCutoff=FALSE)
+
+#GDM uterine vs. GDM vaginal 
+res05_murine_GDM_uterus_v_vagina <- results(ddsDEM, contrast=c("Treatment", "GDM uterine","GDM vaginal"), alpha = 0.05, lfcThreshold = 1, cooksCutoff=FALSE, tidy = TRUE)
+print (res05_GBS_GDMvcontrol_uterus)
+
+write.csv(as.data.frame(res05_murine_GDM_uterus_v_vagina), 
+          file="murine_GDM_uterus_v_vagina.csv")
+
+#control uterine vs. control vaginal 
+res05_murine_control_uterus_v_vagina <- results(ddsDEM, contrast=c("Treatment", "Control uterine","Control vaginal"), alpha = 0.05, lfcThreshold = 1, cooksCutoff=FALSE, tidy = TRUE)
+print (res05_GBS_GDMvcontrol_uterus)
+
+write.csv(as.data.frame(res05_murine_control_uterus_v_vagina), 
+          file="murine_control_uterus_v_vagina.csv")
+
+#We can look at a summary of our DEGs with the R function "summary" which tells us how many genes were up- or downregulated out of total genes (by log fold change)
+summary(res_murine_GDMvcontrol_uterus) #9DEGs
+summary(res05_murine_GDMvcontrol_vagina) #4DEGs
+summary(res05_murine_GDM_uterus_v_vagina) #3322DEGs
+summary(res05_murine_control_uterus_v_vagina) #3286DEGs
+
+#Exporting DEG list 
+resSig_murine_GDMvcontrol_uterus <- subset(res05_murine_GDMvcontrol_uterus, padj < 0.05)
+
+write.csv(as.data.frame(resSig_murine_GDMvcontrol_uterus), 
+          file="murine_GDMvcontrol_uterus_9DEGs.csv")
+
+resSig_murine_GDMvcontrol_vagina <- subset(res05_murine_GDMvcontrol_vagina, padj < 0.05)
+
+write.csv(as.data.frame(resSig_murine_GDMvcontrol_vagina), 
+          file="resSig_murine_GDMvcontrol_vagina_4DEGs.csv")
+
+resSig_murine_GDM_uterus_vagina <- subset(res05_murine_GDM_uterus_v_vagina, padj < 0.05)
+resSig_murine_GDM_uterus_vagina
+
+write.csv(as.data.frame(resSig_murine_GDM_uterus_vagina), 
+          file="murine_GDM_uterus_vagina_3322DEGs.csv")
+
+resSig_murine_control_uterus_vagina <- subset(res05_murine_control_uterus_v_vagina, padj < 0.05)
+resSig_murine_GDM_uterus_vagina
+
+write.csv(as.data.frame(resSig_murine_control_uterus_vagina), 
+          file="murine_control_uterus_vagina_3286DEGs.csv")
+
+#high vs low uterine burden analysis 
+ddsHLmurine <- DESeqDataSetFromMatrix(countData = Murinecountdata,
+                                colData = metadata,
+                                design = ~Tissue.burden)
+
+#run DESeq2 on all samples: the program includes library size normalization
+murine_ddsHLDE <- DESeq(ddsHLmurine, minReplicatesForReplace=Inf)  
+
+replaceOutliersWithTrimmedMean( murine_ddsHLDE, trim = 0.1, minReplicates = 3 )
+
+#export normalized read count
+murinenormCountsHL <- counts(murine_ddsHLDE, normalized = T)
+View(normCountsHL)
+
+write.csv(murinenormCountsHL, "Normalized.murinecounts.HighvLow_uterine_burden.csv")
+
+
+#high vs low uterine burden grouped
+res05_murine_high_v_low_uterine_burden <- results(murine_ddsHLDE, contrast=c("Tissue.burden", "Uterus High", "Uterus Low"), alpha = 0.05, lfcThreshold = 1, cooksCutoff=FALSE)
+resSig_murine_high_v_low_uterine_burden <- subset(res05_murine_high_v_low_uterine_burden, padj < 0.05)
+print (res05_murine_high_v_low_uterine_burden)
+summary(res05_murine_high_v_low_uterine_burden) #13DEGs
+
+write.csv(as.data.frame(resSig_murine_high_v_low_uterine_burden), 
+          file="murine_high_v_low_uterus_13DEGs.csv")
+
+####Part 2: Plotting and Heatmaps ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+library(pheatmap)
+library(ggplot2)
+BiocManager::install('PCAtools')
+library(PCAtools)
+library("RColorBrewer")
+BiocManager::install("ReportingTools")
+BiocManager::install("regionReport")
+BiocManager::install("pcaExplorer")
+BiocManager::install("iSEE")
+BiocManager::install('EnhancedVolcano')
+library(EnhancedVolcano)
+BiocManager::install('biocLite')
+install.packages("devtools"); library(devtools)
+install.packages("VennDiagram")
+library(VennDiagram)
+library(limma)
+
+#PCA plot 
+#Step one is transforming the normalized count 
+#for small data sets (n <30), rlog is a better method of data transformation 
+#rlog outperforms VST when there is a wide range of sequencing depth across samples (an order of magnitude)
+# Going to re-do transformation with rlog
+
+#for GDM vs. control analysis
+GDMmurinerld <- rlog(ddsDEM, blind = FALSE)
+head(assay(GDMmurinerld), 3)
+
+#for high vs low uterine burden analysis 
+GDMmurinerldHL <- rlog(murine_ddsHLDE, blind = FALSE)
+head(assay(GDMmurinerldHL), 3)
+
+#before PCA plot, heat map of sample distances to assess overall similarity between samples 
+GDM_murine_sampleDists <- dist(t(assay(GDMmurinerld)))
+GDM_murine_sampleDists
+
+GDM_murine_sampleDistsHL <- dist(t(assay(GDMmurinerldHL)))
+
+GDM_murine_sampleDistMatrix <- as.matrix( GDM_murine_sampleDists )
+rownames(GDM_murine_sampleDistMatrix) <- paste(GDMmurinerld$Tissue)
+colnames(GDM_murine_sampleDistMatrix) <- colData(ddsDEM)$ID
+colors2 <- colorRampPalette( rev(brewer.pal(3, "Set3")) )(255)
+my_sample_col <- data.frame("Diabetic Status" = c(rep("Control",8),rep("GDM",8)))
+my_sample_col2 <- data.frame (("Uterine Burden" = c(rep("High",4),rep("Low",4), 
+                                                    rep("High",4), rep("Low",4))))
+rownames(my_sample_col) <- colnames(GDM_murine_sampleDistMatrix)
+pheatmap(GDM_murine_sampleDistMatrix,annotation_col = my_sample_col ,annotation_names_col2 = my_sample_col2,
+         clustering_distance_rows = GDM_murine_sampleDists ,
+         clustering_distance_cols = GDM_murine_sampleDists, colors = blues9) 
+
+#PCA plot after data transformation 
+plotPCA(GDMmurinerld, intgroup=c("Diabetic.status", "Tissue"))
+
+#Can also customize PCA plot using ggplot function
+pcaData2 <- plotPCA(GDMmurinerld, intgroup=c("Diabetic.status", "Tissue"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData2, "percentVar"))
+Murine_uterus_vagina_PCA_plot_final <- ggplot(pcaData2, aes(PC1, PC2, color=Diabetic.status, shape=Tissue)) +
+  geom_point(size=5) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() +
+  geom_text_repel(label=paste(metadata$ID), size=6, max.overlaps = 30) + 
+  stat_ellipse() + scale_color_manual(values=c("gray60", "slategray3")) + 
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),legend.title = element_text(size=16), legend.text = element_text(size=14),
+        panel.background = element_blank(), axis.text.x = element_text(size = 20), legend.spacing.y = unit(0.1, 'cm'), legend.position = 'right', 
+        axis.text.y = element_text(size = 20), axis.title=element_text(size=20)) 
+
+Murine_uterus_vagina_PCA_plot_final
+ggsave(Murine_uterus_vagina_PCA_plot_final, file="/Users/Vicki/Desktop/Murine_uterus_vagina_PCA_plot_final.png", dpi = 600)
+
+#volcano plots 
+GDM_vs_control_uterus_m <- read.csv("murine_GDMvcontrol_uterus_padj.csv", header = T)
+
+GDM_vs_control_vagina_m <- read.csv("murine_GDMvcontrol_vagina_padj.csv", header = T)
+
+GDM_uterus_vs_vagina <-read.csv("murine_GDM_uterus_v_vagina_padj.csv", header = T)
+
+Control_uterus_vs_vagina <-read.csv("murine_control_uterus_v_vagina_padj.csv", header = T)
+
+Murine_GDM_vs_Cont_vagina_volcano_plot <- EnhancedVolcano(res_murine_GDMvcontrol_vaginal,
+           lab = rownames(res_murine_GDMvcontrol_vaginal),
+           x = 'log2FoldChange',
+           y = 'pvalue',
+           xlab = bquote(~Log[2]~ "fold change (GDM/pregnant control)"),
+           title = 'Vaginal tissue',
+           subtitle = 'GDM vs. control',
+           pCutoff = 1e-5,
+           FCcutoff = 1,
+           pointSize = 6.0,  
+           selectLab = c('Chil4','Eif3j1','H2-Q6','Sbpl'),
+           labSize = 7, legendLabSize = 18, axisLabSize = 18, 
+           col=c('grey20', 'seashell3', 'aquamarine3', 'slategray3'),
+           colAlpha = 0.85,xlim = c(-40, 40), ylim = c(0, 20), drawConnectors = TRUE,
+           gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf)
+
+Murine_GDM_vs_Cont_vagina_volcano_plot
+ggsave(Murine_GDM_vs_Cont_vagina_volcano_plot, file="/Users/Vicki/Desktop/Murine_GDM_vs_Cont_vagina_volcano_plot.png", dpi = 300, width = 7, height = 9)
+
+Murine_GDM_vs_Cont_uterus_volcano_plot <- EnhancedVolcano(res_murine_GDMvcontrol_uterus,
+                lab = rownames(res_murine_GDMvcontrol_uterus_sig),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlab = bquote(~Log[2]~ "fold change (GDM/pregnant control)"),
+                title = 'Uterine tissue',
+                subtitle = 'GDM vs. control',
+                pCutoff = 1e-5,
+                FCcutoff = 1,
+                pointSize = 6.0,
+                selectLab = c('Cxcl2','Cst8','Nlrp14','Prol1',
+                            'Odam','Padi6','Rad21l','Zp2','Scgb2b27'),
+                labSize = 7, legendLabSize = 18, axisLabSize = 18, 
+                col=c('grey20', 'seashell3', 'aquamarine3', 'slategray3'),
+                colAlpha = 0.85,xlim = c(-25, 25), ylim = c(0, 25), drawConnectors = TRUE,
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf)
+
+Murine_GDM_vs_Cont_uterus_volcano_plot
+ggsave(Murine_GDM_vs_Cont_uterus_volcano_plot, file="/Users/Vicki/Desktop/Murine_GDM_vs_Cont_uterus_volcano_plot.png", dpi = 300, width = 7, height = 9)
+
+
+EnhancedVolcano(Control_uterus_vs_vagina,
+                lab = rownames(res05_murine_control_uterus_v_vagina),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlab = bquote(~Log[2]~ "fold change (Uterus/Vagina)"),
+                title = 'Control uterine vs. vaginal transcription',
+                subtitle = NULL,
+                pCutoff = 0.05,
+                FCcutoff = 1,
+                pointSize = 4.0,
+                labSize = 5, 
+                col=c('azure4', 'bisque2', 'aquamarine3', 'cadetblue4'),
+                colAlpha = 0.85, xlim = c(-40, 40), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf)
+
+EnhancedVolcano(GDM_uterus_vs_vagina,
+                lab = rownames(res05_murine_GDM_uterus_v_vagina),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlab = bquote(~Log[2]~ "fold change (GDM/pregnant control)"),
+                title = 'GDM uterus vs. vaginal transcription',
+                subtitle = NULL,
+                pCutoff = 0.05,
+                FCcutoff = 1,
+                pointSize = 4.0,
+                labSize = 5, 
+                col=c('azure4', 'bisque2', 'aquamarine3', 'cadetblue4'),
+                colAlpha = 0.85, xlim = c(-20, 20), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf)
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% GSEA ANALYSIS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("Biobase")
+install.packages(c("GSA","bitops","Cairo"), repos = "https://cran.rstudio.com")
+
+BiocManager::install("topGO")
+BiocManager::install("KEGGREST", force = TRUE)
+BiocManager::install("fgsea")
+install.packages("data.table")
+BiocManager::install("ReactomePA")
+BiocManager::install("tibble", force = TRUE)
+BiocManager::install("org.Mm.eg.db", force = TRUE)
+install.packages("tidyverse")
+install.packages("enrichplot")
+
+
+library(fgsea)
+library(data.table)
+library(ggplot2)
+library(ReactomePA)
+library(tidyr)
+library(biomaRt)
+library(DESeq2)
+library(dplyr)
+library(reshape2)
+library(org.Mm.eg.db)
+library(tibble)
+library(ComplexHeatmap)
+library(circlize)
+library(AnnotationDbi)
+library(tidyverse)
+library(enrichplot)
+
+
+browseVignettes("topGO")
+browseVignettes("KEGGREST")
+browseVignettes("fgsea")
+browseVignettes("ReactomePA")
+
+# Map Ensembl gene IDs to the symbol. First, create a mapping table.
+uterus_ensembl2symbol <- AnnotationDbi::select(org.Mm.eg.db,
+                                               key=res_murine_GDMvcontrol_uterus$row, 
+                                               columns="ENSEMBL",
+                                               keytype="SYMBOL")
+
+uterus_ensembl2symbol <- as_tibble(uterus_ensembl2symbol)
+uterus_ensembl2symbol
+
+res_murine_GDMvcontrol_uterus <- res_murine_GDMvcontrol_uterus  %>% 
+rename("row" = "SYMBOL")
+
+#join them 
+Uterus_annotated_res <- merge(data.frame(res_murine_GDMvcontrol_uterus), uterus_ensembl2symbol, by=c("SYMBOL"))
+Uterus_annotated_res
+Uterus_annotated_res <- as_tibble(Uterus_annotated_res)
+
+# remove the NAs, averaging statistics for a multi-hit symbol
+Uterus_annotated_res2 <- Uterus_annotated_res %>% 
+  dplyr::select(SYMBOL, stat) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(stat=mean(stat))
+Uterus_annotated_res2
+
+# creating  a named vector [ranked genes]
+Uterus_annotated_genes_ranks <- deframe(Uterus_annotated_res2)
+head(Uterus_annotated_genes_ranks, 20)
+
+# Load the pathway (gene set) into a named list
+# downloaded mysigdb were located in my "~" directory:
+pathways.hallmark <- gmtPathways("/Users/Vicki/Desktop/Msigdb/mh.all.v2023.1.Mm.symbols.gmt")
+pathways.reactome <- gmtPathways("/Users/Vicki/Desktop/Msigdb/m2.cp.reactome.v2023.1.Mm.symbols.gmt")
+pathways.GO <- gmtPathways("/Users/Vicki/Desktop/Msigdb/m5.go.v2023.1.Mm.symbols.gmt")
+pathways.GO.bp <- gmtPathways("/Users/Vicki/Desktop/Msigdb/m5.go.bp.v2023.1.Mm.symbols.gmt")
+
+pathways.hallmark %>% 
+  head() %>% 
+  lapply(head)
+
+#fgsea analysis and results
+fgsea_uterus_GDM_vs_controls_results <- fgseaMultilevel(pathways=pathways.hallmark, stats=Uterus_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+fgsea_uterus_GDM_vs_controls_results_reactome <- fgseaMultilevel(pathways=pathways.reactome, stats=Uterus_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+fgsea_uterus_GDM_vs_controls_results_GO <- fgseaMultilevel(pathways=pathways.GO, stats=Uterus_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+fgsea_uterus_GDM_vs_controls_results_GO_BP <- fgseaMultilevel(pathways=pathways.GO.bp, stats=Uterus_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+
+
+#tidy the results
+fgsea_uterus_GDM_vs_controls_results_Tidy <- fgsea_uterus_GDM_vs_controls_results %>%
+as_tibble() %>%
+arrange(desc(NES))
+
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy <- fgsea_uterus_GDM_vs_controls_results_reactome %>%
+as_tibble() %>%
+na.omit() %>%
+arrange(desc(NES))
+
+fgsea_uterus_GDM_vs_controls_results_GO_Tidy <- fgsea_uterus_GDM_vs_controls_results_GO %>%
+as_tibble() %>%
+arrange(desc(NES))
+
+fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy <- fgsea_uterus_GDM_vs_controls_results_GO_BP %>%
+as_tibble() %>%
+arrange(desc(NES))
+
+#show in table 
+fgsea_uterus_GDM_vs_controls_results_Tidy %>% 
+dplyr::select(-leadingEdge, -ES) %>% 
+arrange(padj) %>% 
+DT::datatable()
+
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy %>% 
+dplyr::select(-leadingEdge, -ES) %>% 
+arrange(padj) %>% 
+DT::datatable()
+
+fgsea_uterus_GDM_vs_controls_results_GO_Tidy %>% 
+dplyr::select(-leadingEdge, -ES) %>% 
+arrange(padj) %>% 
+DT::datatable()
+
+fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+#plots findings 
+fgsea_uterus_GDM_vs_controls_results_Tidy$adjPvalue <- ifelse(fgsea_uterus_GDM_vs_controls_results_Tidy$padj <= 0.05, "significant", "not significant")
+cols <- c("not significant" = "grey", "significant" = "lightsteelblue3")
+ggplot(fgsea_uterus_GDM_vs_controls_results_Tidy, aes(reorder(pathway, NES), NES, fill = adjPvalue)) +
+  geom_col() +
+  scale_fill_manual(values = cols) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+     title="Hallmark pathways Enrichment Score: GDM vs Control Uterus")
+
+
+#Plotting reactome findings 
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy$adjPvalue <- ifelse(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy$padj <= 0.05, "significant", "not significant")
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig <- subset(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy, padj < 0.05,)
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig$pathway <- str_replace_all(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig$pathway, c("REACTOME"="", "_"=" "))
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig$NES_sig <- ifelse(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig$NES <= 1, "Downregulated", "Upregulated")
+fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig$log10pval <- -log10(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig$padj)
+
+#bar plot of significant pathways 
+cols <- c("Downregulated" = "darkred", "Upregulated" = "lightblue4")
+Uterus_reactome_plot <- ggplot(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig, aes(reorder(pathway, NES), NES, fill = NES_sig)) +
+  geom_col() + coord_flip() + 
+  scale_fill_manual(values = cols) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.title=element_blank()) + 
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Reactome pathways Enrichment Score: GDM vs Control Uterus")
+Uterus_reactome_plot
+
+ggsave(Uterus_reactome_plot, file="/Users/Vicki/Desktop/Uterus_Reactome_pathways_bar_plot_300_2.png", width = 12, height = 10, dpi = 300)
+
+#dot plot 
+Uterus_Reactome_pathways_dot_plot <- ggplot(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy_sig %>% mutate(padj = -log10(padj)), aes(x=NES, y=pathway, size=padj)) +
+  scale_size(range = c(5, 8)) + geom_point(color="lightsteelblue3") + facet_grid(~NES_sig,scales="free_x", space="free_y", shrink = TRUE) + theme(axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12),
+                                                                                                                                                  strip.text.x = element_text(size = 14), plot.margin = margin(0.0001, 0.0001, 0.0001, 0.0001, "cm"), legend.text=element_text(size=10)) + labs(padj = "-log10(padj)")
+Uterus_Reactome_pathways_dot_plot + labs(size = "-log10(padj)") 
+
+ggsave(Uterus_Reactome_pathways_dot_plot, file="/Users/Vicki/Desktop/Uterus_Reactome_pathways_dot_plot.png", width =15, height = 20, dpi = 1200)
+
+#Another bar plot, of all pathways 
+Uterus_reactome_findings <- ggplot(fgsea_uterus_GDM_vs_controls_results_reactome_Tidy, aes(reorder(pathway, padj), NES, fill = padj)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  coord_flip() + 
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Reactome pathways Enrichment Score: GDM vs Control Uterus")
+
+
+#plotting GO biological processes findings 
+fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy$adjPvalue <- ifelse(fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy$padj <= 0.05, "significant", "not significant")
+cols <- c("not significant" = "grey", "significant" = "lightsteelblue3")
+ggplot(fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy, aes(reorder(pathway, NES), NES, fill = adjPvalue)) +
+  geom_col() +
+  scale_fill_manual(values = cols) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways Enrichment Score: GDM vs Control Uterus")
+
+#Plotting only significant findings for GO BP 
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig <- subset(fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy, padj < 0.05,)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig$pathway <- str_replace_all(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig$pathway, c("GOBP"="", "_"=" "))
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig$NES_sig <- ifelse(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig$NES <= 1, "Downregulated", "Upregulated")
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig <- subset(fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy, padj < 0.05,)
+
+ggplot(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig, aes(x=NES, y=pathway, size=size, color=padj)) +
+  geom_point(alpha=0.7) + facet_grid(~NES_sig,scales='free')  
+
+
+#plotting pathways with NES >1.5 or <-1.5 
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter <- subset(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig, NES < -1.3 | NES >1.3)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter$pathway <- str_replace_all(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter$pathway, c("GOBP"="", "_"=" "))
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter$log10pval <- -log10(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter$padj)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter$leadingedgecount <- lengths(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter$leadingEdge)
+
+#dot plot 
+Uterus_GO_BP_pathways_dot_plot <- ggplot(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter %>% mutate(padj = -log10(padj)), aes(x=NES, y=pathway, size=padj)) +
+  scale_size(range = c(5, 8)) + geom_point(color="lightsteelblue3") + facet_grid(~NES_sig,scales="free_x", space="free_y", shrink = TRUE) + theme(axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12),
+  strip.text.x = element_text(size = 14), plot.margin = margin(0.0001, 0.0001, 0.0001, 0.0001, "cm"), legend.text=element_text(size=10)) + labs(padj = "-log10(padj)")
+Uterus_GO_BP_pathways_dot_plot + labs(size = "-log10(padj)") 
+
+Uterus_GO_BP_pathways_dot_plot
+
+#saving as PNG 
+ggsave(file="/Users/Vicki/Desktop/Uterus GO BP Dot plot 5.17.23.png")
+ggsave(Uterus_GO_BP_pathways_dot_plot, file="/Users/Vicki/Desktop/Uterus_GO_BP_pathways_dot_plot.png", width =15, height = 20, dpi = 1200)
+
+
+#barplot
+cols <- c("Downregulated" = "darkred", "Upregulated" = "lightblue4")
+Uterus_GO_BP_bar_plot <- ggplot(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter, aes(reorder(pathway, NES), NES, fill = NES_sig)) +
+  geom_col() +
+  scale_fill_manual(values = cols) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.title=element_blank()) +
+  coord_flip() + 
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GO pathways Enrichment Score: GDM vs Control Uterus")
+
+Uterus_GO_BP_bar_plot
+ggsave(Uterus_GO_BP_bar_plot, file="/Users/Vicki/Desktop/Uterus_GO_BP_pathways_bar_plot.png", width =15, height = 20, dpi = 1200)
+
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_Tidy <- fgsea_uterus_GDM_vs_controls_results_GO_BP_sig %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fwrite(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig, file="fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filter.tsv", sep="\t", sep2=c("", " ", ""))
+
+
+#############Now, for GDM vs controls vaginal comparison#############
+# Map Ensembl gene IDs to the symbol. First, create a mapping table.
+vagina_ensembl2symbol <- AnnotationDbi::select(org.Mm.eg.db,
+                                               key=res05_murine_GDMvcontrol_vagina$row, 
+                                               columns="ENSEMBL",
+                                               keytype="SYMBOL")
+
+vagina_ensembl2symbol <- as_tibble(vagina_ensembl2symbol)
+vagina_ensembl2symbol
+
+res05_murine_GDMvcontrol_vagina  <- res05_murine_GDMvcontrol_vagina  %>% 
+  rename("row" = "SYMBOL")
+
+#join them 
+Vagina_annotated_res <- merge(data.frame(res05_murine_GDMvcontrol_vagina), vagina_ensembl2symbol, by=c("SYMBOL"))
+Vagina_annotated_res
+Vagina_annotated_res <- as_tibble(Vagina_annotated_res)
+
+# remove the NAs, averaging statistics for a multi-hit symbol
+Vagina_annotated_res2 <- Vagina_annotated_res %>% 
+  dplyr::select(SYMBOL, stat) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(stat=mean(stat))
+Vagina_annotated_res2
+
+# creating  a named vector [ranked genes]
+Vagina_annotated_genes_ranks <- deframe(Vagina_annotated_res2)
+head(Vagina_annotated_genes_ranks, 20)
+
+# Load the pathway (gene set) into a named list
+# downloaded mysigdb were located in my "~" directory:
+pathways.hallmark <- gmtPathways("/Users/Vicki/Desktop/Msigdb/mh.all.v2023.1.Mm.symbols.gmt")
+pathways.reactome <- gmtPathways("/Users/Vicki/Desktop/Msigdb/m2.cp.reactome.v2023.1.Mm.symbols.gmt")
+pathways.GO <- gmtPathways("/Users/Vicki/Desktop/Msigdb/m5.go.v2023.1.Mm.symbols.gmt")
+
+pathways.hallmark %>% 
+  head() %>% 
+  lapply(head)
+
+#fgsea analysis and results
+fgsea_vagina_GDM_vs_controls_results_hallmark <- fgseaMultilevel(pathways=pathways.hallmark, stats=Vagina_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+fgsea_vagina_GDM_vs_controls_results_reactome <- fgseaMultilevel(pathways=pathways.reactome, stats=Vagina_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+fgsea_vagina_GDM_vs_controls_results_GO <- fgseaMultilevel(pathways=pathways.GO, stats=Vagina_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+fgsea_vagina_GDM_vs_controls_results_GO_BP <- fgseaMultilevel(pathways=pathways.GO.bp, stats=Vagina_annotated_genes_ranks, minSize=15, maxSize=500, nPermSimple = 10000)
+
+#tidy the results
+fgsea_vagina_GDM_vs_controls_results_hallmarks_Tidy <- fgsea_vagina_GDM_vs_controls_results_hallmark %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy <- fgsea_vagina_GDM_vs_controls_results_reactome %>%
+  as_tibble() %>%
+  na.omit() %>%
+  arrange(desc(NES))
+
+fgsea_vagina_GDM_vs_controls_results_GO_Tidy <- fgsea_vagina_GDM_vs_controls_results_GO %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy <- fgsea_vagina_GDM_vs_controls_results_GO_BP %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+#show in table 
+fgsea_vagina_GDM_vs_controls_results_hallmarks_Tidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+fgsea_vagina_GDM_vs_controls_results_GO_Tidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+#plot GO BP findings 
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy$adjPvalue <- ifelse(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy$padj <= 0.05, "significant", "not significant")
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig <- subset(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy, padj < 0.05,)
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig$pathway <- str_replace_all(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig$pathway, c("GOBP"="", "_"=" "))
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig$NES_sig <- ifelse(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig$NES <= 1, "Downregulated", "Upregulated")
+fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig$log10pval <- -log10(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig$padj)
+
+#bar plot of significant pathways 
+cols <- c("Downregulated" = "darkred", "Upregulated" = "lightblue4")
+Vagina_GO_BP_plot <- ggplot(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig, aes(reorder(pathway, NES), NES, fill = NES_sig)) +
+  geom_col() +
+  scale_fill_manual(values = cols) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.title=element_blank()) +
+  coord_flip() + 
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GO pathways Enrichment Score: GDM vs Control Vagina")
+
+ggsave(Vagina_GO_BP_plot, file="/Users/Vicki/Desktop/Vagina_GO_BP_pathways_bar_plot.png", width =15, height = 20, dpi = 1200)
+Vagina_GO_BP_plot
+
+#dot plot 
+Vagina_GO_BP_pathways_dot_plot <- ggplot(fgsea_vagina_GDM_vs_controls_results_GO_BP_Tidy_sig %>% mutate(padj = -log10(padj)), aes(x=NES, y=pathway, size=padj)) +
+  scale_size(range = c(5, 8)) + geom_point(color="lightsteelblue3") + facet_grid(~NES_sig,scales="free_x", space="free_y", shrink = TRUE) + theme(axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12),
+                                                                                                                                                  strip.text.x = element_text(size = 14), plot.margin = margin(0.0001, 0.0001, 0.0001, 0.0001, "cm"), legend.text=element_text(size=10)) + labs(padj = "-log10(padj)")
+Vagina_GO_BP_pathways_dot_plot + labs(size = "-log10(padj)") 
+
+ggsave(Vagina_GO_BP_pathways_dot_plot, file="/Users/Vicki/Desktop/Vagina_GO_BP_pathways_dot_plot.png", width =15, height = 20, dpi = 1200)
+
+#plot Reactome findings 
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy$adjPvalue <- ifelse(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy$padj <= 0.05, "significant", "not significant")
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig <- subset(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy, padj < 0.05,)
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig$pathway <- str_replace_all(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig$pathway, c("REACTOME"="", "_"=" "))
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig$NES_sig <- ifelse(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig$NES <= 1, "Downregulated", "Upregulated")
+fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig$log10pval <- -log10(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig$padj)
+
+#bar plot of significant pathways 
+cols <- c("Downregulated" = "darkred", "Upregulated" = "lightblue4")
+Vagina_Reactome_plot <- ggplot(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig, aes(reorder(pathway, NES), NES, fill = NES_sig)) +
+  geom_col() +
+  scale_fill_manual(values = cols) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.title=element_blank()) +
+  coord_flip() + 
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="GO pathways Enrichment Score: GDM vs Control Vagina")
+
+ggsave(Vagina_Reactome_plot, file="/Users/Vicki/Desktop/Vagina_Reactome_pathways_bar_plot2.png", width = 11, height = 8, dpi = 300)
+Vagina_Reactome_plot
+
+#dot plot 
+Vagina_Reactome_pathways_dot_plot <- ggplot(fgsea_vagina_GDM_vs_controls_results_reactome_Tidy_sig %>% mutate(padj = -log10(padj)), aes(x=NES, y=pathway, size=padj)) +
+  scale_size(range = c(5, 8)) + geom_point(color="lightsteelblue3") + facet_grid(~NES_sig,scales="free_x", space="free_y", shrink = TRUE) + theme(axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12),
+                                                                                                                                                  strip.text.x = element_text(size = 14), plot.margin = margin(0.0001, 0.0001, 0.0001, 0.0001, "cm"), legend.text=element_text(size=10)) + labs(padj = "-log10(padj)")
+Vagina_Reactome_pathways_dot_plot + labs(size = "-log10(padj)") 
+
+ggsave(Vagina_Reactome_pathways_dot_plot, file="/Users/Vicki/Desktop/Vagina_Reactome_pathways_dot_plot.png", width =15, height = 20, dpi = 1200)
+
+
+
+
+
+#################################didnt use this code below for final figures. Exploratory ####################################
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig <- subset(fgsea_uterus_GDM_vs_controls_results_GO_BP_Tidy, padj < 0.05,)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_up <- subset(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig, NES > 0.0)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_up$log10 <- -log10(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_up$pval)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_up$pathway <- str_replace_all(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_up$pathway, c("GOBP"="", "_"=" "))
+
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_down <- subset(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig, NES < 0.0)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_down$log10 <- -log10(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_down$pval)
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_down$pathway <- str_replace_all(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_down$pathway, c("GOBP"="", "_"=" "))
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig$log10 <- -log10(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig$pval)
+
+outfile="/Users/Vicki/Desktop/Hallmark_Uterus_UPREG.pdf"
+pdf(file=outfile, width = 8)
+ggplot(data=fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_up, aes(x=reorder(pathway,NES), y=log10)) + 
+  geom_bar(stat="identity", fill="steelblue", width = 0.7) +
+  coord_flip() +
+  labs(x="Pathways", y="pvalue (-log10)") +
+  theme_minimal()
+dev.off()
+
+outfile="/Users/Vicki/Desktop/Hallmark_Uterus_Downreg.pdf"
+pdf(file=outfile, width = 8, height = 20)
+ggplot(data=fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_filt_down, aes(x=reorder(pathway,NES), y=log10)) + 
+  geom_bar(stat="identity", fill="steelblue", width = 0.7) +
+  coord_flip() +
+  labs(x="Pathways", y="pvalue (-log10)") +
+  theme_minimal() 
+dev.off()
+
+fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_tidy <- fgsea_uterus_GDM_vs_controls_results_GO_BP_sig %>%
+as_tibble() %>%
+arrange(desc(NES))
+
+outfile="/Users/Vicki/Desktop/Hallmark_Uterus_sig.pdf"
+pdf(file=outfile, width = 8, height = 20)
+ggplot(fgsea_uterus_GDM_vs_controls_results_GO_BP_sig_tidy, aes(x=reorder(pathway, NES), NES, y=log10)) +
+  geom_bar(stat="identity", fill="steelblue", width = 0.7) +
+  theme_minimal() +
+  coord_flip() + 
+  labs(x="Pathway", y="pvalue (-log10)")
+##############################################################################################
+
+
+
+
+
