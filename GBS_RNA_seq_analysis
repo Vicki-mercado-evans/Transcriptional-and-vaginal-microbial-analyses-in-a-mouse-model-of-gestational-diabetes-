@@ -1,0 +1,349 @@
+# Install packages needed 
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.16", force = TRUE)
+BiocManager::install("limma")
+BiocManager::install("pcaExplorer")
+BiocManager::install("Glimma")
+BiocManager::install("DESeq2", force = TRUE)
+install.packages("TSP")
+
+library( "DESeq2" )
+
+####Part 1: Generating a normalized read count file from raw read counts with gene names, and creating results from DESeq2 package
+
+#Load raw read count file from MiGS/SeqCenter
+Gbsdata <- read.csv("GBS_counts_RS.csv", header = T, row.names = 1)
+View(Gbsdata)
+
+Coldata<-read.csv("coldata.csv", header=T,)
+
+rownames(Coldata)<-Coldata$run
+
+#Transform Subread feature count file so that its suitable for DESeq2 & create metadata file
+countdata <- as.data.frame(Gbsdata)
+metadata <- as.data.frame(Coldata)
+
+#make sure that the column names of count data are the same as IDS from metadata (ColData) file
+head(countdata)
+head(metadata)
+names(countdata) [-1]
+metadata$ID
+all(names(countdata)==metadata$ID)
+
+#create DESeq data matrix 
+dds <- DESeqDataSetFromMatrix(countData = countdata,
+                              colData = metadata,
+                              design = ~Treatment)
+
+
+#run DESeq2 on all samples: the program includes library size normalization
+ddsDE <- DESeq(dds)  
+
+replaceOutliersWithTrimmedMean( ddsDE, trim = 0.1, minReplicates = 3 )
+
+#export normalized read count
+normCounts <- counts(ddsDE, normalized = T)
+View(normCounts)
+
+write.csv(normCounts, "Normalized.GBScounts.GDMvControls.csv")
+
+#Now let's pull out only significant DEGs that have a corrected p-value of < 0.05 (default is 0.1)
+#for GDM uterine vs. control uterine
+res_GBS_GDMvcontrol_uterus <- results(ddsDE, contrast=c("Treatment", "GDM uterine","Control uterine"), lfcThreshold = 1)
+print (res_GBS_GDMvcontrol_uterus)
+
+res05_GBS_GDMvcontrol_uterus <- results(ddsDE, contrast=c("Treatment", "GDM uterine","Control uterine"), alpha = 0.05, lfcThreshold = 1)
+print (res05_GBS_GDMvcontrol_uterus)
+
+#for GDM vaginal vs control vaginal
+res05_GBS_GDMvcontrol_vagina <- results(ddsDE, contrast=c("Treatment", "GDM vaginal","Control vaginal"), alpha = 0.05, lfcThreshold = 1)
+print (res05_GBS_GDMvcontrol_uterus)
+
+#GDM uterine vs. GDM vaginal 
+res05_GBS_GDM_uterus_v_vagina <- results(ddsDE, contrast=c("Treatment", "GDM uterine","GDM vaginal"), alpha = 0.05, lfcThreshold = 1)
+print (res05_GBS_GDMvcontrol_uterus)
+
+res_GBS_GDM_uterus_v_vagina <- results(ddsDE, contrast=c("Treatment", "GDM uterine","GDM vaginal"), lfcThreshold = 1)
+
+#log fold change shrinkage for visualization (volcano plots)
+#trying different shrinkage approaches to see which is most compatible with data 
+res_GBS_GDM_uterus_v_vagina_lfc <- lfcShrink(ddsDE,
+                                             contrast = c('Treatment','GDM uterine','GDM vaginal'), type = 'normal')
+
+write.csv(as.data.frame(res_GBS_GDM_uterus_v_vagina_lfc), 
+          file="GBS_GDM_uterus_vagina_15DEGs_lfcshrink.csv")
+
+res_GBS_GDM_uterus_v_vagina_lfc_ashr <- lfcShrink(ddsDE,
+                                                  contrast = c('Treatment','GDM uterine','GDM vaginal'), type = 'ashr')
+
+res_GBS_GDM_uterus_v_vagina_lfc_ashr_s_value <- lfcShrink(ddsDE,
+                                                          contrast = c('Treatment','GDM uterine','GDM vaginal'), type = 'ashr', svalue = TRUE)
+
+#control uterine vs. control vaginal 
+res05_GBS_control_uterus_v_vagina <- results(ddsDE, contrast=c("Treatment", "Control uterine","Control vaginal"), alpha = 0.05, lfcThreshold = 1)
+print (res05_GBS_GDMvcontrol_uterus)
+
+#log fold change shrinkage for visualization (volcano plots)
+res_GBS_Control_uterus_v_vagina_lfc <- lfcShrink(ddsDE,
+                                                 contrast = c('Treatment','Control uterine','Control vaginal'), type = 'normal')
+
+write.csv(as.data.frame(res_GBS_Control_uterus_v_vagina_lfc), 
+          file="GBS_Control_uterus_vagina_20DEGs_lfcshrink.csv")
+
+res_GBS_Control_uterus_v_vagina_lfc_ashr <- lfcShrink(ddsDE,
+                                                      contrast = c('Treatment','Control uterine','Control vaginal'), type = 'ashr')
+
+#We can look at a summary of our DEGs with the R function "summary" which tells us how many genes were up- or downregulated out of total genes (by log fold change)
+summary(res_GBS_GDMvcontrol_uterus)
+summary(res05_GBS_GDMvcontrol_uterus) #0DEGs
+summary(res05_GBS_GDMvcontrol_vagina) #0DEGs
+summary(res05_GBS_GDM_uterus_v_vagina) #15DEGs
+summary(res05_GBS_control_uterus_v_vagina) #20DEGs
+
+#Exporting DEG list 
+resSig_GBS_GDM_uterus_vagina <- subset(res05_GBS_GDM_uterus_v_vagina, padj < 0.05)
+resSig_GBS_GDM_uterus_vagina
+
+write.csv(as.data.frame(resSig_GBS_GDM_uterus_vagina), 
+          file="GBS_GDM_uterus_vagina_15DEGs.csv")
+
+resSig_GBS_control_uterus_vagina <- subset(res05_GBS_control_uterus_v_vagina, padj < 0.05)
+resSig_GBS_GDM_uterus_vagina
+
+write.csv(as.data.frame(resSig_GBS_control_uterus_vagina), 
+          file="GBS_control_uterus_vagina_20DEGs.csv")
+
+#We can plot our data by log fold change and mean normalized counts. 
+#We can set a limit on the y-axis from -5 to 5 for LFC. Genes that are in the positive LFC are biased for AFD while genes in the negative LFC are biased for WT
+plotMA(ddsDE, ylim = c(-5,5))
+
+
+#high vs low uterine burden analysis 
+ddsHL <- DESeqDataSetFromMatrix(countData = countdata,
+                                colData = metadata,
+                                design = ~Tissue.burden)
+
+#run DESeq2 on all samples: the program includes library size normalization
+ddsHLDE <- DESeq(ddsHL)  
+
+replaceOutliersWithTrimmedMean( ddsHLDE, trim = 0.1, minReplicates = 3 )
+
+#export normalized read count
+normCountsHL <- counts(ddsHLDE, normalized = T)
+View(normCountsHL)
+
+write.csv(normCountsHL, "Normalized.GBScounts.HighvLow_uterine_burden.csv")
+
+#high vs low uterine burden grouped
+res05_GBS_high_v_low_uterine_burden <- results(ddsHLDE, contrast=c("Tissue.burden", "Uterus High", "Uterus Low"), alpha = 0.05, lfcThreshold = 1)
+print (res05_GBS_high_v_low_uterine_burden)
+summary(res05_GBS_high_v_low_uterine_burden) #0DEGs, 11 outliers 
+
+#high vs low vaginal burden grouped
+res05_GBS_high_v_low_vagina_burden <- results(ddsHLDE, contrast=c("Tissue.burden", "Vagina High", "Vagina Low"), alpha = 0.05, lfcThreshold = 1)
+print (res05_GBS_high_v_low_vagina_burden)
+summary(res05_GBS_high_v_low_vagina_burden) #0DEGs, 11 outliers 
+
+
+####Part 2: Plotting and Heatmaps ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+library(pheatmap)
+library(ggplot2)
+BiocManager::install('PCAtools', force = TRUE)
+library(PCAtools)
+library("RColorBrewer")
+BiocManager::install("ReportingTools")
+BiocManager::install("regionReport")
+BiocManager::install("pcaExplorer")
+BiocManager::install("iSEE")
+BiocManager::install('EnhancedVolcano', force = TRUE)
+library(EnhancedVolcano)
+BiocManager::install('biocLite')
+install.packages("devtools"); library(devtools)
+install.packages("VennDiagram")
+library(VennDiagram)
+library(limma)
+install.packages("rlang")
+library(rlang)
+
+#PCA plots
+#for GDM vs. control analysis
+GDMGBSrld <- rlog(ddsDE, blind = FALSE)
+head(assay(GDMGBSrld), 3)
+
+#for high vs low uterine burden analysis 
+GDMGBSrldHL <- rlog(ddsHLDE, blind = FALSE)
+head(assay(GDMGBSrldHL), 3)
+
+#before PCA plot, heat map of sample distances to assess overall similarity between samples 
+GDM_GBS_sampleDists <- dist(t(assay(GDMGBSrld)))
+GDM_GBS_sampleDists
+
+GDM_GBS_sampleDistsHL <- dist(t(assay(GDMGBSrldHL)))
+
+GDM_GBS_sampleDistMatrix <- as.matrix( GDM_GBS_sampleDists )
+rownames(GDM_GBS_sampleDistMatrix) <- paste(GDMGBSrld$Tissue)
+colnames(GDM_GBS_sampleDistMatrix) <- colData(ddsDE)$ID
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+my_sample_col <- data.frame("Diabetic Status" = c(rep("Control",8),rep("GDM",8)))
+my_sample_col2 <- data.frame (("Uterine Burden" = c(rep("High",4),rep("Low",4), 
+                                                    rep("High",4, rep("Low",4)))))
+rownames(my_sample_col) <- colnames(GDM_GBS_sampleDistMatrix)
+pheatmap(GDM_GBS_sampleDistMatrix,annotation_col = my_sample_col ,
+         clustering_distance_rows = GDM_GBS_sampleDistsHL ,
+         clustering_distance_cols = GDM_GBS_sampleDistsHL,) 
+
+#PCA plot after data transformation 
+plotPCA(GDMGBSrld, intgroup=c("Diabetic.status", "Tissue"))
+
+#Can also customize PCA plot using ggplot function
+pcaData <- plotPCA(GDMGBSrld, intgroup=c("Diabetic.status", "Tissue"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+GBSPCAplot <- ggplot(pcaData, aes(PC1, PC2, color=Diabetic.status, shape=Tissue)) +
+  geom_point(size=2) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() +
+  xlim(-15, 15) + ylim(-25, 25) +
+  geom_text_repel(label=paste(metadata$ID), size=3, max.overlaps = 20) + 
+  stat_ellipse() + 
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+
+GBSPCAplot_recolor <- GBSPCAplot + scale_color_brewer(palette = "Purples")
+
+GBSPCAplot_recolor <- GBSPCAplot + scale_color_manual(values = c("tan", "plum4"))
+
+GBSPCAplot_recolor
+
+#gene clustering 
+library( "genefilter" )
+
+topVarGenes <- head( order( rowVars( assay(GDMGBSrld) ), decreasing=TRUE ), 20 )
+
+pheatmap( assay(GDMGBSrld)[ topVarGenes, ], scale="row", trace="none", dendrogram="column", 
+          col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255))
+
+topVarGenesHL <- head( order( rowVars( assay(GDMGBSrldHL) ), decreasing=TRUE ), 20 )
+
+pheatmap( assay(GDMGBSrldHL)[ topVarGenesHL, ], scale="row", trace="none", dendrogram="column", 
+          col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255))
+
+#volcano plots 
+EnhancedVolcano(res_GBS_GDM_uterus_v_vagina_lfc,
+                lab = rownames(res_GBS_GDM_uterus_v_vagina_lfc),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                title = 'GDM',
+                subtitle = 'Uterine GBS vs. Vaginal GBS',
+                pCutoff = 1e-18,
+                FCcutoff = 1.2,
+                pointSize = 4,
+                selectLab = c('SAK_RS06520','SAK_RS06220','SAK_RS08695','SAK_RS09065',
+                              'SAK_RS08980','SAK_RS01760','SAK_RS00825','SAK_RS07010', 
+                              'SAK_RS07995','SAK_RS04330','SAK_RS02315','SAK_RS02820', 
+                              'SAK_RS00885','SAK_RS10715','SAK_RS01595'),
+                labSize = 4,
+                col=c('azure4', 'bisque1', 'thistle3', 'mediumpurple4'),
+                colAlpha = 0.85, xlim = c(-5, 5), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf, drawConnectors = TRUE)
+
+EnhancedVolcano(res_GBS_GDM_uterus_v_vagina_lfc_ashr,
+                lab = rownames(res_GBS_GDM_uterus_v_vagina_lfc_ashr),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                title = 'GDM',
+                subtitle = 'Uterine GBS vs. Vaginal GBS',
+                pCutoff = 1e-6,
+                FCcutoff = 1.13,
+                pointSize = 4,
+                labSize = 4,
+                selectLab = c('SAK_RS06520','SAK_RS06220','SAK_RS08695','SAK_RS09065',
+                              'SAK_RS08980','SAK_RS01760','SAK_RS00825','SAK_RS07010', 
+                              'SAK_RS07995','SAK_RS04330','SAK_RS02315','SAK_RS02820', 
+                              'SAK_RS00885','SAK_RS10715','SAK_RS01595'),
+                col=c('azure4', 'bisque1', 'thistle3', 'mediumpurple4'),
+                colAlpha = 0.85, xlim = c(-5, 5), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf, drawConnectors = TRUE)
+
+EnhancedVolcano(res_GBS_GDM_uterus_v_vagina_lfc_ashr_s_value,
+                lab = rownames(res_GBS_GDM_uterus_v_vagina_lfc_ashr_s_value),
+                x = 'log2FoldChange',
+                y = 'svalue',
+                title = 'GDM',
+                subtitle = 'Uterine GBS vs. Vaginal GBS',
+                pCutoff = 1e-12,
+                FCcutoff = 1,
+                pointSize = 4,
+                labSize = 4,
+                selectLab = c('SAK_RS06520','SAK_RS06220','SAK_RS08695','SAK_RS09065',
+                              'SAK_RS08980','SAK_RS01760','SAK_RS00825','SAK_RS07010', 
+                              'SAK_RS07995','SAK_RS04330','SAK_RS02315','SAK_RS02820', 
+                              'SAK_RS00885','SAK_RS10715','SAK_RS01595'),
+                col=c('azure4', 'bisque1', 'thistle3', 'mediumpurple4'),
+                colAlpha = 0.85, xlim = c(-5, 5), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf, drawConnectors = TRUE)
+
+
+EnhancedVolcano(res_GBS_Control_uterus_v_vagina_lfc,
+                lab = rownames(res_GBS_Control_uterus_v_vagina_lfc),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                title = 'Control',
+                subtitle = 'Uterine GBS vs. Vaginal GBS',
+                pCutoff = 1e-15,
+                FCcutoff = 1.2,
+                pointSize = 4,
+                selectLab = c('SAK_RS06520','SAK_RS06220','SAK_RS08695','SAK_RS08640', 
+                              'SAK_RS08980','SAK_RS01760','SAK_RS00825','SAK_RS07010', 
+                              'SAK_RS07995','SAK_RS02870','SAK_RS02315','SAK_RS02820', 
+                              'SAK_RS00885','SAK_RS08460','SAK_RS01595', 'SAK_RS09300', 
+                              'SAK_RS10120','SAK_RS10655','SAK_RS10730','SAK_RS09065'),
+                labSize = 4, 
+                col=c('azure4', 'bisque1', 'thistle3', 'mediumpurple4'),
+                colAlpha = 0.85, xlim = c(-5, 5), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf)
+
+EnhancedVolcano(res_GBS_Control_uterus_v_vagina_lfc_ashr,
+                lab = rownames(res_GBS_Control_uterus_v_vagina_lfc_ashr),
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                title = 'Control',
+                subtitle = 'Uterine GBS vs. Vaginal GBS',
+                pCutoff = 1e-6,
+                FCcutoff = 1.28,
+                pointSize = 4,
+                labSize = 4,
+                selectLab = c('SAK_RS06520','SAK_RS06220','SAK_RS08695','SAK_RS08640', 
+                              'SAK_RS08980','SAK_RS01760','SAK_RS00825','SAK_RS07010', 
+                              'SAK_RS07995','SAK_RS02870','SAK_RS02315','SAK_RS02820', 
+                              'SAK_RS00885','SAK_RS08460','SAK_RS01595', 'SAK_RS09300', 
+                              'SAK_RS10120','SAK_RS10655','SAK_RS10730','SAK_RS09065'),
+                col=c('azure4','bisque1','thistle3', 'mediumpurple4'),
+                colAlpha = 0.85, xlim = c(-5, 5), ylim = c(0, 100),
+                gridlines.major = FALSE, gridlines.minor = FALSE, max.overlaps = Inf, drawConnectors = TRUE)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#heat map for top 20 DEGS from GDM and Pregnant control uterine vs vaginal tissue comparisons 
+library (dplyr)
+
+GBSDEGs <- c("SAK_RS00825", "SAK_RS00885", "SAK_RS01595", "SAK_RS01760","SAK_RS02315", "SAK_RS02820", "SAK_RS02870", 
+             "SAK_RS04330", "SAK_RS06220", "SAK_RS06520", "SAK_RS07010", "SAK_RS07995", "SAK_RS08460", "SAK_RS08640", 
+             "SAK_RS08695", "SAK_RS09065", "SAK_RS08980", "SAK_RS09300", "SAK_RS10120", "SAK_RS10655","SAK_RS10715", "SAK_RS10730")
+
+matGBS <- assay(GDMGBSrld)[GBSDEGs, ]
+matGBS <- matGBS - rowMeans(matGBS)
+
+GBS_DEGs_data_subset <- GDMGBSrld[rownames(GDMGBSrld) %in% GBSDEGs,]
+
+Clean.GBS_DEGs_data_subset <- na.omit(GBS_DEGs_data_subset)
+
+is.na(Clean.GBS_DEGs_data_subset) %>% table()
+
+GBS_heatmap <- pheatmap( assay(GDMGBSrld)[ GBSDEGs, ], scale="row", trace="none", dendrogram="column",
+                         annotation_col = my_sample_col,
+                         color=colorRampPalette(c("mediumpurple4","whitesmoke","lightgoldenrod3"))(n = 17))
+
