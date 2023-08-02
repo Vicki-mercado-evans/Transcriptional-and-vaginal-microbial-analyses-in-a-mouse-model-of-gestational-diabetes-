@@ -1,0 +1,2266 @@
+conda activate qiime2-2023.2
+#!/usr/bin/env bash
+cd/Users/owner/Desktop/GDMconv16s/
+  
+# convert to .gz
+for f in `ls RawSequences_exp1`; do
+bzcat RawSequences_exp1/$f/*.1.fq.bz2 | gzip -c > RawSequences_exp1/$f/$f.1.fq.gz;
+bzcat RawSequences_exp1/$f/*.2.fq.bz2 | gzip -c > RawSequences_exp1/$f/$f.2.fq.gz;
+done
+
+for f in `ls RawSequences_exp2`; do
+bzcat RawSequences_exp2/$f/*.1.fq.bz2 | gzip -c > RawSequences_exp2/$f/$f.1.fq.gz;
+bzcat RawSequences_exp2/$f/*.2.fq.bz2 | gzip -c > RawSequences_exp2/$f/$f.2.fq.gz;
+done
+
+for f in `ls RawSequences_exp3`; do
+bzcat RawSequences_exp3/$f/*.1.fq.bz2 | gzip -c > RawSequences_exp3/$f/$f.1.fq.gz;
+bzcat RawSequences_exp3/$f/*.2.fq.bz2 | gzip -c > RawSequences_exp3/$f/$f.2.fq.gz;
+done
+
+# update manifest file
+cat GDM_manifest_all_samples.txt | sed "s/bz2/gz/g" > GDM_manifest_allsamples_May.txt
+
+cat GDM_manifest_all_samples_April2023_v2.txt | sed "s/bz2/gz/g" > GDM_manifest_allsamples_April2023_v2_1.txt
+
+# Remove the bz2 compressed files
+find RawSequences_exp1 -name "*.bz2" | less
+find RawSequences_exp2 -name "*.bz2" | less
+find RawSequences_exp3 -name "*.bz2" | less
+
+find RawSequences_exp1 -name "*.bz2" | xargs rm
+find RawSequences_exp2 -name "*.bz2" | xargs rm
+find RawSequences_exp3 -name "*.bz2" | xargs rm
+
+#Imported GDMconv16s_renamed-manifest2.txt as PairedEndFastqManifestPhred33V2 to paired-end-demux.qza
+qiime tools import \
+--type 'SampleData[PairedEndSequencesWithQuality]' \
+--input-path GDM_manifest_allsamples_May.txt \
+--output-path paired-end-demux_allexp_final.qza \
+--input-format PairedEndFastqManifestPhred33V2
+
+qiime tools peek paired-end-demux_allexp_April2023.qza
+
+#returned information from terminal 4.10.2023 for samples from exp 1-3 
+# UUID:        489bf10e-7891-4fb2-89a0-8b2a8e3df42b
+# Type:        SampleData[PairedEndSequencesWithQuality]
+# Data format: SingleLanePerSamplePairedEndFastqDirFmt
+
+qiime demux summarize \
+--i-data paired-end-demux_allexp_final.qza \
+--o-visualization Visualization/paired-end-demux_allexp_final
+
+qiime tools view Visualization/paired-end-demux_allexp_April2023.qzv
+
+mkdir qiime2-read-joining
+
+#READ-JOINING TO MATCH END-PAIRS
+qiime vsearch merge-pairs \
+--i-demultiplexed-seqs paired-end-demux_allexp_final.qza \
+--o-merged-sequences qiime2-read-joining/demux-joined_allexp_final.qza
+
+qiime demux summarize \
+--i-data qiime2-read-joining/demux-joined_allexp_final.qza \
+--o-visualization qiime2-read-joining/demux-joined_allexp_final.qza
+
+#QUALITY FILTERING 
+qiime quality-filter
+from qiime2.plugins import quality_filter
+#changed from quality-filterq-score-joined
+
+qiime quality-filter q-score \
+--i-demux qiime2-read-joining/demux-joined_allexp_final.qza \
+--p-min-quality 3 \
+--p-quality-window 3 \
+--p-min-length-fraction 0.75 \
+--p-max-ambiguous 0 \
+--o-filtered-sequences qiime2-read-joining/demux-joined-filtered_allexp_final.qza \
+--o-filter-stats qiime2-read-joining/demux-joined-filter-stats_allexp_final.qza
+
+qiime deblur denoise-16S \
+--i-demultiplexed-seqs qiime2-read-joining/demux-joined-filtered_allexp_final.qza \
+--p-trim-length 150 \
+--p-sample-stats \
+--p-mean-error 0.005 \
+--p-indel-prob 0.01 \
+--p-indel-max 3 \
+--p-min-reads 0 \
+--p-min-size 2 \
+--p-jobs-to-start 5 \
+--o-representative-sequences rep-seqs_GDM_allexp_final.qza \
+--o-table table_GDM_allexp_final.qza \
+--o-stats deblur-stats_GDM_allexp_final.qza
+
+qiime metadata tabulate \
+--m-input-file qiime2-read-joining/demux-joined-filter-stats_allexp_final.qza \
+--o-visualization Visualization/demux-joined-filter-stats_allexp_final.qzv
+
+qiime deblur visualize-stats \
+--i-deblur-stats deblur-stats_GDM_allexp_final.qza \
+--o-visualization Visualization/deblur-stats_allexp_final.qzv
+
+#Classify OTUs
+qiime feature-classifier classify-sklearn \
+--i-classifier training-feature-classifiers/gg-13-8-99-classifier.qza \
+--i-reads rep-seqs_GDM_allexp_final.qza \
+--o-classification taxonomy_GDM_allexp_final.qza
+--------------------------------------------------------------------------------------------------------------
+#Re-train classifier--> Needs to be done every so often 
+mkdir training-feature-classifiers
+cd training-feature-classifiers
+
+#curl -sLO https://data.qiime2.org/2021.4/tutorials/training-feature-classifiers/99_otu_taxonomy.txt
+#curl -sLO https://data.qiime2.org/2021.4/tutorials/training-feature-classifiers/99_otus.fasta
+#curl -sLO https://data.qiime2.org/2021.4/tutorials/training-feature-classifiers/rep-seqs.qza
+
+#Imported 99_otus.fasta as DNASequencesDirectoryFormat to 99_otus.qza
+qiime tools import  \
+--type FeatureData[Sequence] \
+--input-path 99_otus.fasta \
+--output-path 99_otus.qza
+
+#Imported 99_otu_taxonomy.txt as TSVTaxonomyDirectoryFormat to ref-taxonomy.qza
+qiime tools import \
+--type FeatureData[Taxonomy] \
+--input-path 99_otu_taxonomy.txt \
+--output-path ref-taxonomy.qza
+
+#Saved FeatureData[Sequence] to: ref-seqs.qza
+#This extracts the V4 region from all sequences corresponding to different OTUs 
+qiime feature-classifier extract-reads \
+--i-sequences 99_otus.qza \
+--p-f-primer GTGCCAGCMGCCGCGGTAA \
+--p-r-primer GGACTACHVGGGTWTCTAAT \
+--o-reads ref-seqs.qza
+
+#TRAIN THE CLASSIFIER
+qiime feature-classifier fit-classifier-naive-bayes \
+--i-reference-reads ref-seqs.qza \
+--i-reference-taxonomy ref-taxonomy.qza \
+--o-classifier gg-13-8-99-classifier.qza
+---------------------------------------------------------------------------------------------------------------
+qiime tools export \
+--input-path taxonomy_GDM_allexp_final.qza \
+--output-path exported/taxonomy_final
+
+qiime tools export \
+--input-path rep-seqs_GDM_allexp_final.qza \
+--output-path exported/RepSeqsfinal
+
+# tells us how many OTUs per sample 
+qiime tools export \
+--input-path table_GDM_allexp_final.qza  \
+--output-path exported/unfilt_feattable_allexp_final 
+
+#cd to exported/filt_feattable
+biom convert -i exported/unfilt_feattable_allexp_final/feature-table.biom -o exported/unfilt_feattable_allexp_final/unfiltfeat_table_allexp_final.txt --to-tsv --header-key taxonomy
+
+biom convert --table-type="OTU table" -i exported/unfilt_feattable_allexp_final/feature-table.biom -o exported/unfilt_feattable_allexp_final/unfiltfeat_table_allexp_final.txt --to-tsv --header-key taxonomy
+
+#added taxonomy in txt and am converting back
+biom convert -i exported/unfilt_feattable_allexp_final/unfiltfeat_table_allexp_taxa_final.txt -o exported/unfilt_feattable_allexp_final/unfiltfeat_table_allexp_final_json.biom --table-type="OTU table" --to-json --process-obs-metadata taxonomy
+
+#can pre-visualize the data on atima.research.bcm.edu
+#upload private dataset: unfiltfeat_json.biom file (on metadata sheet, samples will match by name, no need to rearrange)
+_______________________________________________________________________________________________________________________________________________________________________  
+qiime feature-table summarize \
+--i-table table_GDM_allexp_final.qza \
+--o-visualization Visualization/GDM_table_allexp_unfiltered_final.qzv \
+--m-sample-metadata-file GDM_metadata_allexp.txt
+
+qiime feature-table tabulate-seqs \
+--i-data rep-seqs_GDM_allexp_final.qza \
+--o-visualization Visualization/rep-seqs_GDM_allexp_unfiltered_final.qzv
+
+qiime taxa barplot \
+--i-table table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza  \
+--m-metadata-file GDM_metadata_allexp.txt \
+--o-visualization Visualization/GDM_allexp_unfiltered_barplot_final
+
+qiime feature-table relative-frequency \
+--i-table table_GDM_allexp_final.qza \
+--o-relative-frequency-table Output/GDM_allexp_unfiltered_relfreq_final 
+
+qiime tools export \
+--input-path Output/GDM_allexp_unfiltered_relfreq_final  \
+--output-path exported/relative_frequency_unfiltered_allexp_final
+
+biom convert -i exported/relative_frequency_unfiltered_allexp_final/feature-table.biom -o exported/relative_frequency_unfiltered_final/relfreq_allexp_table_final.txt --to-tsv --header-key taxonomy 
+
+#used relfreq.txt file to start sorting out possible contaminants
+#added taxonomy column from taxonomy.tsv file 
+#added Sums column (Sum by row, to calculate frequency among all samples for that taxa)
+_____________________________________________________________________________________________________________________________________________________________________  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%% FILTERING OUT CONTAMINANTS %%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+
+#filtering out taxa that are in fewer than 3 samples 
+qiime feature-table filter-features \
+--i-table table_GDM_allexp_final.qza \
+--p-min-samples 3 \
+--o-filtered-table table_GDM_allexp_filtered_min3.qza
+
+qiime tools export \
+--input-path table_GDM_allexp_filtered_min3.qza \
+--output-path exported/table_GDM_allexp_filtered_min3
+
+biom convert -i exported/table_GDM_allexp_filtered_min3/feature-table.biom -o exported/table_GDM_allexp_filtered_min3.txt --to-tsv --header-key taxonomy 
+
+#filtering out contaminants based on what was in PBS blanks 
+qiime taxa filter-table \
+--i-table table_GDM_allexp_filtered_min3.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza  \
+--p-exclude geobacillus,methylobacterium,stenotrophomonas,agrobacterium,pedobacter,herbaspirillum,arthrobacter,rubrivivax,acidovorax,petrobacter,oxalobacteraceae \
+--o-filtered-table filt_table_GDM_allexp_final.qza
+
+qiime tools export \
+--input-path filt_table_GDM_allexp_final.qza \
+--output-path exported/table_GDM_allexp_min3_furtherfiltered1
+
+biom convert -i exported/table_GDM_allexp_min3_furtherfiltered1/feature-table.biom -o exported/table_GDM_allexp_min3_furtherfiltered1.txt --to-tsv --header-key taxonomy 
+
+#further filtering out contaminants individually 
+qiime taxa filter-table \
+--i-table filt_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Gammaproteobacteria; o__Pseudomonadales; f__Pseudomonadaceae; g__Pseudomonas; s__veronii" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Alphaproteobacteria; o__Rhizobiales; f__Bradyrhizobiaceae; g__Bradyrhizobium" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Betaproteobacteria; o__Burkholderiales; f__Oxalobacteraceae; g__Ralstonia; s__" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Cyanobacteria; c__Chloroplast; o__Streptophyta; f__; g__; s__" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Alphaproteobacteria; o__Rhizobiales; f__Bradyrhizobiaceae" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Cyanobacteria; c__Chloroplast; o__Chlorophyta; f__; g__; s__" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Gammaproteobacteria; o__Pseudomonadales; f__Moraxellaceae; g__Acinetobacter" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Alphaproteobacteria; o__Rickettsiales; f__mitochondria" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Betaproteobacteria; o__Burkholderiales; f__Oxalobacteraceae; g__Ralstonia; s_" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Cyanobacteria; c__Chloroplast; o__Chlorophyta; f__; g__; s__" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Actinobacteria; c__Actinobacteria; o__Actinomycetales; f__Propionibacteriaceae; g__Propionibacterium; s__acnes" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Alphaproteobacteria; o__Sphingomonadales; f__Sphingomonadaceae" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Betaproteobacteria; o__Burkholderiales; f__Oxalobacteraceae; g__Ralstonia; s__" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "chloroplast" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "cyanobacteria" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "Thermi" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "Archaea" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "Planctomycetes" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "Chloro" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "Gemmatimonadetes" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "Thermo" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "TM7" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "FBP" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Gammaproteobacteria; o__Pseudomonadales; f__Pseudomonadaceae" \
+--o-filtered-table filt_taxa_table_GDM_allexp_final.qza
+
+qiime tools export \
+--input-path filt_taxa_table_GDM_allexp_final.qza \
+--output-path exported/filtfeat_table_GDM_allexp
+
+biom convert -i exported/filtfeat_table_GDM_allexp/feature-table.biom -o exported/filtfeat_table_GDM_allexp/GDM_filtfeat_table_allexp.txt --to-tsv --header-key taxonomy
+
+qiime feature-table summarize \
+--i-table filt_taxa_table_GDM_allexp_final.qza \
+--o-visualization Visualization/filt_idtaxa_table_GDM_allexp.qzv \
+--m-sample-metadata-file GDM_metadata_allexp.txt
+
+#manually removed contaminants from taxonomy.tsv file and saved as new file: taxonomy_filtered
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% DECONTAM PROGRAM in R %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#decontam 
+BiocManager::install("phyloseq")
+library(phyloseq); packageVersion("phyloseq")
+library(ggplot2); packageVersion("ggplot2")
+BiocManager::install("decontam")
+library(decontam); packageVersion("decontam")
+browseVignettes("decontam")
+library("readxl") 
+library("dplyr") 
+library("tibble")
+
+OTU_matrix<- read_excel("/Users/Vicki/Desktop/GDMconv16s/Decontam/Decontam_data.xlsx", sheet = "OTU")
+Taxonomy_matrix<- read_excel("/Users/Vicki/Desktop/GDMconv16s/Decontam/Decontam_data.xlsx", sheet = "Taxonomy")
+Samples_df <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Decontam/Decontam_data.xlsx", sheet = "Samples")
+
+OTU_matrix <- OTU_matrix %>%
+  tibble::column_to_rownames("OTU") 
+
+Taxonomy_matrix <- Taxonomy_matrix %>% 
+  tibble::column_to_rownames("OTU")
+
+Samples_df <- Samples_df %>% 
+  tibble::column_to_rownames("sample") 
+
+OTU_matrix <- as.matrix(OTU_matrix)
+Taxonomy_matrix <- as.matrix(Taxonomy_matrix)
+
+t_OTU_matrix <- t(OTU_matrix)
+
+OTU = otu_table(t_OTU_matrix, taxa_are_rows = FALSE)
+TAX = tax_table(Taxonomy_matrix)
+samples = sample_data(Samples_df)
+
+Decontamfile <- phyloseq(OTU, TAX, samples)
+
+Decontamfile
+
+# Put sample_data into a ggplot-friendly data.frame
+df <- as.data.frame(sample_data(Decontamfile)) 
+df$LibrarySize <- sample_sums(Decontamfile)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=Sample_or_control)) + geom_point()
+
+Decontamfile.ord <- ordinate(Decontamfile, "PCoA", "bray")
+plot_ordination(Decontamfile, Decontamfile.ord, type="Samples", color="Sample_or_control")
+
+#the prevalence (presence/absence across samples) of each sequence feature in true positive samples 
+#is compared to the prevalence in negative controls to identify contaminants.
+sample_data(Decontamfile)$is.neg <- sample_data(Decontamfile)$Sample_or_control == "Control"
+
+#threshold .1
+contamdf.prev.1 <- isContaminant(Decontamfile, method="prevalence", neg="is.neg")
+table(contamdf.prev.1$contaminant)
+which(contamdf.prev.1$contaminant)
+write.csv(contamdf.prev.1, file = "contaminant_table_prevalence_.1.csv")
+
+#threshold 0.5, which will identify as contaminants all sequences thare are more prevalent in negative controls than in positive samples.
+contamdf.prev.5 <- isContaminant(Decontamfile, method="prevalence", neg="is.neg", threshold=0.5)
+table(contamdf.prev.5$contaminant)
+which(contamdf.prev.5$contaminant)
+write.csv(contamdf.prev.5, file = "contaminant_table_prevalence_.5.csv")
+
+#threshold 0.2, 
+contamdf.prev.2 <- isContaminant(Decontamfile, method="prevalence", neg="is.neg", threshold=0.2)
+table(contamdf.prev.2$contaminant)
+which(contamdf.prev.2$contaminant)
+write.csv(contamdf.prev.2, file = "contaminant_table_prevalence_.2.csv")
+
+GDM_Decontam_taxa_table <- prune_taxa(!contamdf.prev.2$contaminant,Decontamfile )
+
+GDM_Decontam_taxa_table <- as.matrix(otu_table(GDM_Decontam_taxa_table))
+
+GDM_Decontam_taxa_table_t <- t(GDM_Decontam_taxa_table)
+
+write.csv(GDM_Decontam_taxa_table_t,"GDM_Decontam_taxa_table_t.csv", row.names=TRUE)
+
+biom convert -i Decontam/GDM_post_decontam_final_table.txt -o Decontam/GDM_Featuretable_post_decontam_final_json.biom --table-type="OTU table" --to-json
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% CONTINUED QIIME ANALYSES AND PROCESSING %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ qiime tools import \
+--input-path Decontam/GDM_Featuretable_post_decontam_final_json.biom \
+--type 'FeatureTable[Frequency]' \
+--input-format BIOMV100Format \
+--output-path Decontam/GDM_allexp_OTU_decontam.qza
+
+#without blanks (manually removed from metadata)
+qiime feature-table filter-samples \
+--i-table Decontam/GDM_allexp_OTU_decontam.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-filtered-table filt_samples_idtaxa_table_GDM_allexp.qza
+
+#min 16 sample filtering without PBS samples 
+qiime feature-table filter-features \
+--i-table filt_samples_idtaxa_table_GDM_allexp.qza \
+--p-min-samples 16 \
+--o-filtered-table filt_idtaxa_table_GDM_samples_allexp_final.qza
+
+qiime feature-table summarize \
+--i-table filt_idtaxa_table_GDM_samples_allexp_final.qza \
+--m-sample-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/Summary_GDM_featuretable_filt_samples_allexp_final.qzv
+
+qiime tools export \
+--input-path filt_idtaxa_table_GDM_samples_allexp_final.qza \
+--output-path Exported_final/filtfeat_table_GDM_allexp_final
+
+biom convert -i Exported_final/filtfeat_table_GDM_allexp_final/feature-table.biom -o Exported_final/filtfeat_table_GDM_allexp_final/GDM_filtfeat_table_allexp_final.txt --to-tsv --header-key taxonomy
+
+qiime taxa filter-table \
+--i-table filt_idtaxa_table_GDM_samples_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Alphaproteobacteria; o__Rhizobiales; f__Phyllobacteriaceae; g__Phyllobacterium; s__" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Firmicutes; c__Bacilli; o__Lactobacillales; f__Enterococcaceae; g__Tetragenococcus; s__halophilus" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Actinobacteria; c__Actinobacteria; o__Actinomycetales; f__Mycobacteriaceae; g__Mycobacterium; s__llatzerense" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Betaproteobacteria; o__Burkholderiales; f__Comamonadaceae; g__Hydrogenophaga; s__" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Proteobacteria; c__Betaproteobacteria; o__Burkholderiales; f__Comamonadaceae" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Firmicutes; c__Bacilli; o__Bacillales; f__Staphylococcaceae; g__Jeotgalicoccus" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime taxa filter-table \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--p-mode contains \
+--p-exclude "k__Bacteria; p__Firmicutes; c__Clostridia; o__Clostridiales; f__Clostridiaceae; g__Candidatus Arthromitus" \
+--o-filtered-table Exported_final/filtfeat_table_GDM_allexp_final.qza
+
+qiime feature-table summarize \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-sample-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/filtfeat_table_GDM_allexp_final2023.qzv
+
+qiime tools export \
+--input-path Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--output-path Exported_final/filtfeat_table_GDM_allexp_final2023
+
+biom convert -i Exported_final/filtfeat_table_GDM_allexp_final2023/feature-table.biom -o Exported_final/filtfeat_table_GDM_allexp_final2023/filtfeat_table_GDM_allexp_final2023.txt --to-tsv --header-key taxonomy
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Analyses with filtered data 
+
+#Beta diversity metrics 
+#all samples grouped
+qiime taxa barplot \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/GDM_allexp_taxa_barplot_final
+
+qiime diversity beta \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza   \
+--p-metric braycurtis \
+--p-pseudocount 1 \
+--p-n-jobs 1 \
+--o-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza
+
+qiime tools export \
+--input-path Output_final/GDM_BCDmatrix_allexp_final.qza \
+--output-path Exported_final/GDM_BCDmatrix_allexp_final
+
+qiime diversity pcoa \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--p-number-of-dimensions 3 \
+--o-pcoa Output_final/GDM_PCoA_BCD_allexp_final
+
+qiime emperor plot \
+--i-pcoa Output_final/GDM_PCoA_BCD_allexp_final.qza  \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-ignore-missing-samples False \
+--o-visualization Visualization_final/GDM_Emperor_BCD_allexp_final
+
+qiime feature-table relative-frequency \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--o-relative-frequency-table Output_final/GDM_allexp_relfreq_final
+
+qiime tools export \
+--input-path Output_final/GDM_allexp_relfreq_final.qza \
+--output-path Exported_final/Allexp_relfreq_taxa_final
+
+biom convert -i Exported_final/Allexp_relfreq_taxa_final/feature-table.biom -o Exported_final/Allexp_relfreq_taxa_final_2023.txt --to-tsv --header-key taxonomy 
+
+#Separate pregnant and NP cohorts to assess Staph succinus abundance throughout gestation
+#Pregnant cohort 
+qiime feature-table filter-samples \
+--i-table Output_final/GDM_allexp_relfreq_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group_2]='Pregnant_cohort'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_allexp_relfreq_pregnant_cohort_final.qza
+
+#NP cohort 
+qiime feature-table filter-samples \
+--i-table Output_final/GDM_allexp_relfreq_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group_2]='nonpregnant_cohort'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_allexp_relfreq_nonpregnant_cohort_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_allexp_relfreq_pregnant_cohort_final.qza \
+--output-path Exported_final/GDM_allexp_relfreq_pregnant_cohort_final
+
+biom convert -i Exported_final/GDM_allexp_relfreq_pregnant_cohort_final.qza/feature-table.biom -o Exported_final/GDM_allexp_relfreq_pregnant_cohort_final.txt --to-tsv --header-key taxonomy 
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_allexp_relfreq_nonpregnant_cohort_final.qza \
+--output-path Exported_final/GDM_allexp_relfreq_nonpregnant_cohort_final
+
+biom convert -i Exported_final/GDM_allexp_relfreq_nonpregnant_cohort_final.qza/feature-table.biom -o Exported_final/GDM_allexp_relfreq_nonpregnant_cohort_final.txt --to-tsv --header-key taxonomy 
+
+qiime diversity pcoa-biplot \
+--i-pcoa Output_final/GDM_PCoA_BCD_allexp_final.qza \
+--i-features Output_final/GDM_allexp_relfreq_final.qza \
+--o-biplot Output_final/GDM_BCD_biplot_allexp_final
+
+qiime emperor biplot \
+--i-biplot Output_final/GDM_BCD_biplot_allexp_final.qza \
+--m-sample-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-feature-metadata-file taxonomy_GDM_allexp_final.qza \
+--o-visualization Visualization_final/GDM_PCoA_BCD_biplot_allexp_final
+
+qiime emperor biplot \
+--i-biplot Output_final/GDM_BCD_biplot_allexp_final.qza \
+--m-sample-metadata-file GDM_metadata_cage_effects_2023.txt \
+--m-feature-metadata-file taxonomy_GDM_allexp_final.qza \
+--o-visualization Visualization_final/GDM_PCoA_BCD_biplot_allexp_collpased_taxa_final_cage_effects
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/GDM_Beta_diversity_TP_permanova_allexp_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/GDM_Beta_diversity_Diet_permanova_allexp_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Pregnancy_status \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/GDM_Beta_diversity_pregnancystatus_permanova_allexp_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_cage_effects_2023.txt \
+--m-metadata-column Cage \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/GDM_Beta_diversity_TP_permanova_allexp_final_cage_effects
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_cage_effects_2023.txt \
+--m-metadata-column Batch_categorical \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/GDM_Beta_diversity_permanova_allexp_final_batch_effects
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_cage_effects_2023.txt \
+--m-metadata-column Experiment_categorical \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/GDM_Beta_diversity_TP_permanova_allexp_final_experiment_number_effects
+
+#parsing by pregnancy and diet 
+
+#GDM beta diversity by TP 
+qiime feature-table filter-samples \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='GDM'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_GDM_group_final.qza
+
+qiime diversity beta \
+--i-table Output_final/Filtered_tables/filtfeat_table_GDM_group_final.qza   \
+--p-metric braycurtis \
+--p-pseudocount 1 \
+--p-n-jobs 1 \
+--o-distance-matrix Output_final/BCDmatrix_GDM_group_final.qza
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_GDM_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_TP_permanova_GDM_group_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_GDM_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Pregnancy_status \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_pregnancy_status_permanova_GDM_group_final
+
+#Pregnant controls beta diversity by TP 
+qiime feature-table filter-samples \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_Control_group_final.qza
+
+qiime diversity beta \
+--i-table Output_final/Filtered_tables/filtfeat_table_Control_group_final.qza   \
+--p-metric braycurtis \
+--p-pseudocount 1 \
+--p-n-jobs 1 \
+--o-distance-matrix Output_final/BCDmatrix_Control_group_final.qza
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_Control_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_TP_permanova_Control_group_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_Control_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Pregnancy_status \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_pregnancy_status_permanova_Control_group_final
+
+#GDM and pregnant controls 
+qiime feature-table filter-samples \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group_2]='Pregnant_cohort'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_final.qza
+
+qiime diversity beta \
+--i-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_final.qza \
+--p-metric braycurtis \
+--p-pseudocount 1 \
+--p-n-jobs 1 \
+--o-distance-matrix Output_final/BCDmatrix_pregnant_cohort_final.qza
+
+qiime diversity beta-group-significance \
+--i-distance-matrix  Output_final/BCDmatrix_pregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_TP_permanova_pregnant_cohort_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_pregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Pregnancy_status \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_pregnancy_status_permanova_pregnant_cohort_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_pregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_Diet_permanova_pregnant_cohort_final
+
+qiime diversity pcoa \
+--i-distance-matrix Output_final/BCDmatrix_pregnant_cohort_final.qza \
+--p-number-of-dimensions 3 \
+--o-pcoa Output_final/GDM_PCoA_BCD_pregnant_cohort_final
+
+qiime emperor plot \
+--i-pcoa Output_final/GDM_PCoA_BCD_pregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-ignore-missing-samples False \
+--o-visualization Visualization_final/GDM_Emperor_BCD_pregnant_cohort_final
+
+qiime feature-table relative-frequency \
+--i-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_final.qza \
+--o-relative-frequency-table Output_final/GDM_relfreq_pregnant_cohort_final
+
+qiime diversity pcoa-biplot \
+--i-pcoa Output_final/GDM_PCoA_BCD_pregnant_cohort_final.qza \
+--i-features Output_final/GDM_relfreq_pregnant_cohort_final.qza \
+--o-biplot Output_final/GDM_BCD_biplot_pregnant_cohort_final
+
+qiime emperor biplot \
+--i-biplot Output_final/GDM_BCD_biplot_pregnant_cohort_final.qza \
+--m-sample-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-feature-metadata-file taxonomy_GDM_allexp_final.qza \
+--o-visualization Visualization_final/GDM_PCoA_BCD_Emperor_biplot_pregnant_cohort_final
+
+# Relative frequency collapse taxa to genus level 
+qiime taxa collapse \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--i-taxonomy taxonomy_GDM_allexp_final.qza  \
+--p-level 6 \
+--o-collapsed-table Exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final
+
+qiime tools export \
+--input-path Exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final.qza \
+--output-path Exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final
+
+biom convert -i Exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final/feature-table.biom -o exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final.txt --to-tsv --header-key taxonomy 
+
+qiime feature-table relative-frequency \
+--i-table Exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final.qza \
+--o-relative-frequency-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final
+
+qiime tools export \
+--input-path Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--output-path Exported_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final
+
+biom convert -i Exported_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final/feature-table.biom -o Exported_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.txt --to-tsv --header-key taxonomy 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Subsetting timepoints from relative frequency data %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#filter relative frequency info by gestational timepoint 
+#day -7
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='-7'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_minus7_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_minus7_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_minus7_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_minus7_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_minus7_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_minus7_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day -7")
+day_minus7_relfreq_matrix <- as.matrix(day_minus7_relfreq_matrix)
+day_minus7_relfreq_table_t <- t(day_minus7_relfreq_matrix)
+write.csv(day_minus7_relfreq_table_t,"day_minus7_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day -4
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='-4'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_minus4_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_minus4_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_minus4_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_minus4_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_minus4_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_minus4_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day -4")
+day_minus4_relfreq_matrix <- as.matrix(day_minus4_relfreq_matrix)
+day_minus4_relfreq_table_t <- t(day_minus4_relfreq_matrix)
+write.csv(day_minus4_relfreq_table_t,"day_minus4_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day -1
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='-1'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_minus1_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_minus1_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_minus1_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_minus1_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_minus1_allexp_final.txt --to-tsv --header-key taxonomy 
+
+#manually move exported table into new sheet of relative frequency final analysis excel file
+#Then, load into R to transpose so that I can filter by mouse ID
+
+day_minus1_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day -1")
+day_minus1_relfreq_matrix <- as.matrix(day_minus1_relfreq_matrix)
+day_minus1_relfreq_table_t <- t(day_minus1_relfreq_matrix)
+write.csv(day_minus1_relfreq_table_t,"day_minus1_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day 2
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='2'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_2_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_2_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_2_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_2_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_2_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_2_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day 2")
+day_2_relfreq_matrix <- as.matrix(day_2_relfreq_matrix)
+day_2_relfreq_table_t <- t(day_2_relfreq_matrix)
+write.csv(day_2_relfreq_table_t,"day_2_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day 5
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='5'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_5_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_5_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_5_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_5_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_5_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_5_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day 5")
+day_5_relfreq_matrix <- as.matrix(day_5_relfreq_matrix)
+day_5_relfreq_table_t <- t(day_5_relfreq_matrix)
+write.csv(day_5_relfreq_table_t,"day_5_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day 8
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='8'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_8_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_8_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_8_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_8_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_8_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_8_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day 8")
+day_8_relfreq_matrix <- as.matrix(day_8_relfreq_matrix)
+day_8_relfreq_table_t <- t(day_8_relfreq_matrix)
+write.csv(day_8_relfreq_table_t,"day_8_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day 11
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='11'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_11_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_11_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_11_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_11_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_11_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_11_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day 11")
+day_11_relfreq_matrix <- as.matrix(day_11_relfreq_matrix)
+day_11_relfreq_table_t <- t(day_11_relfreq_matrix)
+write.csv(day_11_relfreq_table_t,"day_11_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day 14
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='14'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_14_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_14_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_14_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_14_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_14_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_14_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "day 14")
+day_14_relfreq_matrix <- as.matrix(day_14_relfreq_matrix)
+day_14_relfreq_table_t <- t(day_14_relfreq_matrix)
+write.csv(day_14_relfreq_table_t,"day_14_relfreq_table_final_t.csv", row.names=TRUE)
+
+#day ppd7
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='ppd7'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_day_ppd7_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_day_ppd7_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/GDM_day_ppd7_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/GDM_day_ppd7_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_relfreq_day_ppd7_allexp_final.txt --to-tsv --header-key taxonomy 
+
+day_ppd7_relfreq_matrix <- read_excel("/Users/Vicki/Desktop/GDMconv16s/Exported_final/GDM_collapsedtaxa_relfreq_allexp_final_analysis.xlsx", sheet = "ppd7")
+day_ppd7_relfreq_matrix <- as.matrix(day_ppd7_relfreq_matrix)
+day_ppd7_relfreq_table_t <- t(day_ppd7_relfreq_matrix)
+write.csv(day_ppd7_relfreq_table_t,"day_ppd7_relfreq_table_final_t.csv", row.names=TRUE)
+
+#pregnant controls
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control'" \
+--o-filtered-table Output_final/Filtered_tables/Controls_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/Controls_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables/Controls_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables/Controls_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/Controls_allexp_final.txt --to-tsv --header-key taxonomy 
+
+#GDM
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='GDM'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/GDM_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables/GDM_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables/GDM_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/GDM_allexp_final.txt --to-tsv --header-key taxonomy 
+
+#pregnant controls
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control'" \
+--o-filtered-table Output_final/Filtered_tables/Controls_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/Controls_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables/Controls_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables/Controls_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/Controls_allexp_final.txt --to-tsv --header-key taxonomy 
+
+#NP control diet 
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant control'" \
+--o-filtered-table Output_final/Filtered_tables/NP_controls_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/NP_controls_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables/NP_controls_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables/NP_controls_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/NP_controls_allexp_final.txt --to-tsv --header-key taxonomy 
+
+#NP HFHS diet 
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant HFHS'" \
+--o-filtered-table Output_final/Filtered_tables/NP_HFHS_relfreq_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/NP_HFHS_relfreq_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables/NP_HFHS_relfreq_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables/NP_HFHS_relfreq_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/NP_HFHS_allexp_final.txt --to-tsv --header-key taxonomy 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#OTU analyses 
+qiime diversity alpha \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--p-metric observed_features \
+--o-alpha-diversity Diversity_metrics_final/GDM_OTUs_final
+
+qiime tools export \
+--input-path Diversity_metrics_final/GDM_OTUs_final.qza \
+--output-path Exported_final/GDM_otus_table_allexp_final
+
+qiime diversity alpha-correlation \
+--i-alpha-diversity Diversity_metrics_final/GDM_OTUs_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/GDM_alphacorrelation_final
+
+qiime diversity alpha-group-significance \
+--i-alpha-diversity Diversity_metrics_final/GDM_OTUs_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/GDM_alphagroupsignificance_otus_final
+
+#alpha diversity metrics 
+qiime diversity alpha \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--p-metric shannon \
+--o-alpha-diversity Diversity_metrics_final/GDM_shannon_final
+
+qiime tools export \
+--input-path Diversity_metrics_final/GDM_shannon_final.qza \
+--output-path Exported_final/GDM_shannon_final
+
+qiime diversity alpha-correlation \
+--i-alpha-diversity Diversity_metrics_final/GDM_shannon_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/GDM_alphacorrelation_shannon_final
+
+qiime diversity alpha-group-significance \
+--i-alpha-diversity Diversity_metrics_final/GDM_shannon_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--o-visualization Visualization_final/GDM_alphagroupsignificance_shannon_final
+
+qiime diversity alpha-group-significance \
+--i-alpha-diversity Diversity_metrics_final/GDM_shannon_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--o-visualization Visualization_final/GDM_alphagroupsignificance_shannon_final_dissemination_info
+
+qiime diversity alpha-group-significance \
+--i-alpha-diversity Diversity_metrics_final/GDM_shannon_final.qza \
+--m-metadata-file GDM_metadata_cage_effects_2023.txt \
+--o-visualization Visualization_final/GDM_alphagroupsignificance_shannon_final_cage_effects
+
+qiime diversity alpha-correlation \
+--i-alpha-diversity Diversity_metrics_final/GDM_shannon_final.qza \
+--m-metadata-file GDM_metadata_cage_effects_2023.txt \
+--o-visualization Visualization_final/GDM_alphacorrelation_shannon_final_cage_effects
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "Shannon_entropy" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 14 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_shannon_Dayminus1_d14_final
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% ANCOM %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#ANCOM for d14 samples GDM vs. controls and within each group, pup survival >50% or not 
+qiime composition add-pseudocount \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--o-composition-table Output_final/ANCOM_ready_table_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='14' " \
+--o-filtered-table ANCOM_filtered-table_d14_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_d14_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[50_survival]='N' or [50_survival]='Y' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pup_survival_d14_final.qza
+
+qiime tools export \
+--input-path Output_final/ANCOM_filtered-table_pup_survival_d14_final.qza \
+--output-path Exported_final/ANCOM_filtered-table_pup_survival_final
+
+biom convert -i Exported_final/ANCOM_filtered-table_pup_survival_final/feature-table.biom -o Exported_final/ANCOM_filtered-table_pup_survival_d14_final.txt --to-tsv --header-key taxonomy 
+
+#d14 ANCOM by diet and pup survival
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pup_survival_d14_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/Ancom_d14_diet_pup_survival_final
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pup_survival_d14_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='GDM' " \
+--o-filtered-table ANCOM_filtered-table_d14_GDM_pup_survival_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pup_survival_d14_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control' " \
+--o-filtered-table ANCOM_filtered-table_d14_Control_pup_survival_final.qza
+
+#d14 ANCOM mean pup survival GDM and controls 
+#GDM
+qiime composition ancom \
+--i-table ANCOM_filtered-table_d14_GDM_pup_survival_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column 50_survival \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ancom_d14_GDM_pup_survival_final
+
+#controls
+qiime composition ancom \
+--i-table ANCOM_filtered-table_d14_Control_pup_survival_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column 50_survival \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ancom_d14_control_pup_survival_final
+
+#filtering out non-pregnant mice, grouping GDM and controls together  
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_d14_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[pup_outcomes_pregnant]='Y'" \
+--o-filtered-table Output_final/ANCOM_filtered-table_pup_survival_pregnant_d14_final.qza
+
+#d14 ANCOM by mean pup survival GDM and controls grouped 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pup_survival_pregnant_d14_final.qza  \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column 50_survival \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ancom_d14_pup_survival_gestation_day_final
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% ANCOM GDM vs controls by timepoint %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+if (!requireNamespace("BiocManager", quietly=TRUE))
+install.packages("BiocManager")
+BiocManager::install("ANCOMBC", force=TRUE)
+install.packages('tidyverse')
+pip install git+https://github.com/mortonjt/q2-ancombc.git
+qiime dev refresh-cache
+library(ANCOMBC)
+
+#d -7 ANCOM GDM vs controls 
+#filter out day -7 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='-7' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_dminus7_final.qza
+
+#compare day -7 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_dminus7_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_dminus7_diet_final
+  
+#d -1 ANCOM GDM vs controls 
+#filter out day -1 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='-1' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_dminus1_final.qza
+
+#compare day -1 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_dminus1_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_dminus1_diet_final
+  
+#E2 ANCOM GDM vs controls 
+#filter out day 2 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='2' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d2_final.qza
+
+#compare day2 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d2_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d2_diet_final
+
+#E5 ANCOM GDM vs controls 
+#filter out day 5 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='5' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d5_final.qza
+
+#compare day5 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d5_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d5_diet_final
+
+#E8 ANCOM GDM vs controls 
+#filter out day 8 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='8' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d8_final.qza
+
+#compare day8 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d8_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d8_diet_final
+
+#E11 ANCOM GDM vs controls 
+#filter out day 8 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='11' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d11_final.qza
+
+#compare day11 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d11_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d11_diet_final
+
+#E11 ANCOM GDM vs controls 
+#filter out day 8 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='11' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d11_final.qza
+
+#compare day11 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d11_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d11_diet_final
+
+#E14 ANCOM GDM vs controls 
+#filter out day 8 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='14' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d14_final.qza
+
+#compare day14 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d14_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d14_diet_final
+
+#ANCOM analysis within each group, across all TPs
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='GDM' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_GDM_all_TP_final.qza
+
+qiime tools export \
+--input-path Output_final/ANCOM_filtered-table_GDM_all_TP_final.qza \
+--output-path Exported_final/ANCOM_filtered-table_GDM_all_TP_final 
+
+biom convert -i Exported_final/ANCOM_filtered-table_GDM_all_TP_final/feature-table.biom -o Exported_final/ANCOM_filtered-table_GDM_all_TP_final.txt --to-tsv --header-key taxonomy 
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_Control_all_TP_final.qza
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_all_TP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_GDM_TP_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Control_all_TP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_Control_TP_final
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant HFHS' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_NP_HFHS_all_TP_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant control' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_NP_Control_all_TP_final.qza
+
+qiime tools export \
+--input-path Output_final/ANCOM_filtered-table_NP_Control_all_TP_final.qza \
+--output-path Exported_final/ANCOM_filtered-table_NP_control_all_TP_final 
+
+biom convert -i Exported_final/ANCOM_filtered-table_NP_control_all_TP_final/feature-table.biom -o Exported_final/ANCOM_filtered-table_NP_control_all_TP_finall.txt --to-tsv --header-key taxonomy 
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_NP_HFHS_all_TP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_NP_HFHS_TP_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_NP_Control_all_TP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_NP_Control_TP_final
+
+%%%%%%%%%%%%%%%%%%%%%%%%% ANCOM with table collapsed to genus level %%%%%%%%%%%%%%%%%%%%%%%%%%
+qiime composition add-pseudocount \
+--i-table Exported_final/filt_collapsedtaxa_genus_table_GDM_allexp_final.qza \
+--o-composition-table Output_final/ANCOM_ready_table_genus_level_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='GDM' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_GDM_genus_level_TP_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_Control_genus_level_TP_final.qza
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_genus_level_TP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_GDM_TP_genus_level_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Control_genus_level_TP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_Control_TP_genus_level_final
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant HFHS' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_NP_HFHS_TP_Genus_level_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant control' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_NP_Control_all_TP_genus_level_final.qza
+
+qiime tools export \
+--input-path Output_final/ANCOM_filtered-table_NP_Control_all_TP_final.qza \
+--output-path Exported_final/ANCOM_filtered-table_NP_control_all_TP_final 
+
+biom convert -i Exported_final/ANCOM_filtered-table_NP_control_TP_final/feature-table.biom -o Exported_final/ANCOM_filtered-table_NP_control_all_TP_finall.txt --to-tsv --header-key taxonomy 
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_NP_HFHS_TP_Genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_NP_HFHS_TP__genus_level_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_NP_Control_all_TP_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt  \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_NP_Control_TP_genus_level_final
+
+#d -7 ANCOM GDM vs controls 
+#filter out day -7 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='-7' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_dminus7_genus_final.qza
+
+#compare day -7 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_dminus7_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_dminus7_diet_genus_final
+
+#d -1 ANCOM GDM vs controls 
+#filter out day -1 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='-1' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_dminus1_genus_final.qza
+
+#compare day -1 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_dminus1_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_dminus1_genus_diet_final
+
+#E2 ANCOM GDM vs controls 
+#filter out day 2 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='2' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d2_genus_final.qza
+
+#compare day2 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d2_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d2_diet_genus_final
+
+#E5 ANCOM GDM vs controls 
+#filter out day 5 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='5' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d5_genus_final.qza
+
+#compare day5 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d5_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d5_diet_genus_final
+
+#E8 ANCOM GDM vs controls 
+#filter out day 8 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='8' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d8_genus_final.qza
+
+#compare day8 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d8_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d8_diet_genus_final
+
+#E11 ANCOM GDM vs controls 
+#filter out day 11 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='11' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d11_genus_final.qza
+
+#compare day11 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d11_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d11_diet_genus_final
+
+#E14 ANCOM GDM vs controls 
+#filter out day 14 gestation samples
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day_NP]='14' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_d14_genus_final.qza
+
+#compare day14 samples GDM vs controls 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_d14_genus_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_d14_diet_genus_final
+
+#compare by diet, across all TP 
+qiime composition ancom \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza  \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_diet_genus_allTP_final
+
+#compare GDM vs controls, across all TP
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_all_TP_genus_level_final.qza  \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_diet_genus_allTP_pregnant_cohort_final
+
+#compare pregestational TPs, GDM vs controls 
+# pregnant mice only
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_ready_table_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group_2]='Pregnant_cohort' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_cohort_all_TP_genus_level_final.qza
+
+# exclude ppd7 TP 
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_all_TP_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[postpartum_TP]='peripartum' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza
+
+#only pregestational TP (-7,-4,-1)
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_mating_cohort]='pregestation' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final.qza
+
+qiime tools export \
+--input-path Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final.qza \
+--output-path Exported_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final 
+
+biom convert -i Exported_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final/feature-table.biom -o Exported_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final.txt --to-tsv --header-key taxonomy 
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final.qza  \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_GDM_vs_controls_genus_pregestational_TP_final
+
+#compare gestational TPs, GDM vs controls 
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_mating_cohort]='gestation' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_gestationalTP_final.qza
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_GDM_vs_controls_genus_gestational_TP_final
+
+#compare GDM vs controls across all pregestational TPs
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_pregestationalTP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-difference-function mean_difference \
+--o-visualization Visualization_final/ANCOM_GDM_vs_control_cohorts_genus_all_TP_final
+
+#compare GDM only across all TP exlcuding ppd7 (this TP is likely driving the streptococcus difference)
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='GDM' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_GDM_group_genus_TP_ppd7_excluded_final
+
+#compare Pregnant controls only across all TP exlcuding ppd7 for consistency 
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='Control' " \
+--o-filtered-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--o-visualization Visualization_final/ANCOM_Pregnant_control_group_genus_TP_ppd7_excluded_final
+
+
+#ANCOM of GDM and pregnant controls grouped, binned by dissemination status, across all TPs
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column Uterine_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_uterine_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column fetal_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_fetal_systemic_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_offspring_systemic_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column placental_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_placental_dissemination_ppd7_excluded_final
+
+#ANCOM of GDM by uterine dissemination status, across all TPs
+#offspring dissemination has Y/N for pup outcomes (3/4 groups) AND in utero dissemination samples (1/4 groups),
+#without NA groups (i.e. NA in fetal dissemination for pup outcomes samples), so this is the comparison we can use
+#for all groups sequenced 
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column Uterine_dissemination \
+--o-visualization Visualization_final/ANCOM_GDM_Pregnant_cohort_genus_uterine_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column fetal_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_GDM_genus_fetal_systemic_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_GDM_genus_offspring_systemic_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column placental_dissemination \
+--o-visualization Visualization_final/ANCOM_GDM_genus_placental_dissemination_ppd7_excluded_final
+
+#ANCOM of Pregnant controls by uterine dissemination status, across all TPs
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column Uterine_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_controls_genus_uterine_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column fetal_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_controls_genus_fetal_systemic_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_controls_genus_offspring_systemic_dissemination_ppd7_excluded_final
+
+qiime composition ancom \
+--i-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column placental_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_controls_genus_placental_dissemination_ppd7_excluded_final
+
+# hits on ANCOM for offspring systemic dissemination comparison across all TPs = Enterobacteriaceae and lactobacillus
+#so going to extract relative abundances of these between those that disseminated to offspring vs those that didn't 
+# In prism, will compare rel abundance at all TP, and during midgestation before GBS challenge 
+
+#filtering pregnant cohort file of rel freq collapsed to genus level  
+qiime feature-table filter-samples \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--p-where "[Group_2]='Pregnant_cohort'" \
+--o-filtered-table Output_final/Filtered_tables/Pregnant_cohort_relfreq_genus_filtered_table_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/Filtered_tables/Pregnant_cohort_relfreq_genus_filtered_table_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--p-where "[offspring_systemic_dissemination]='Y'" \
+--o-filtered-table Output_final/Filtered_tables/Pregnant_cohort_Yes_offspring_dissemination_relfreq_genus_filtered_table_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/Filtered_tables/Pregnant_cohort_relfreq_genus_filtered_table_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--p-where "[offspring_systemic_dissemination]='N'" \
+--o-filtered-table Output_final/Filtered_tables/Pregnant_cohort_No_offspring_dissemination_relfreq_genus_filtered_table_final.qza
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/Pregnant_cohort_Yes_offspring_dissemination_relfreq_genus_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/Pregnant_cohort_Yes_offspring_dissemination_relfreq_genus_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/Pregnant_cohort_Yes_offspring_dissemination_relfreq_genus_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/Pregnant_cohort_Yes_offspring_dissemination_relfreq_genus_filtered_table.txt --to-tsv --header-key taxonomy 
+
+qiime tools export \
+--input-path Output_final/Filtered_tables/Pregnant_cohort_No_offspring_dissemination_relfreq_genus_filtered_table_final.qza \
+--output-path Exported_final/Filtered_tables_biom/Pregnant_cohort_No_offspring_dissemination_relfreq_genus_filtered_table_final
+
+biom convert -i Exported_final/Filtered_tables_biom/Pregnant_cohort_No_offspring_dissemination_relfreq_genus_filtered_table_final/feature-table.biom -o Exported_final/Filtered_tables_excel/Pregnant_cohort_No_offspring_dissemination_relfreq_genus_filtered_table.txt --to-tsv --header-key taxonomy 
+
+#ANCOM of Pregnant cohort by dissemination status, on E14
+#no differences 
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='14' " \
+--o-filtered-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E14_final.qza
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column fetal_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_fetal_systemic_dissemination_ppd7_excluded_final_E14
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_offspring_systemic_dissemination_ppd7_excluded_final_E14
+
+#ANCOM of Pregnant cohort by dissemination status, mid-gestation on E11 and E14
+#no differences 
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_pregnant_cohort_exclude_ppd7_genus_level_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--p-where "[gestation_range]='midgestation' " \
+--o-filtered-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E11_E14_final.qza
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E11_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_cohort_genus_offspring_systemic_dissemination_ppd7_excluded_final_E11_E14
+
+#ANCOM of Pregnant controls by uterine dissemination status, on E14
+# no differences 
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_Pregnant_Control_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='14' " \
+--o-filtered-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Controls_exclude_ppd7_genus_level_E14_final.qza
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Controls_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column fetal_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_controls_genus_fetal_systemic_dissemination_ppd7_excluded_final_E14
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Controls_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_Pregnant_controls_genus_offspring_systemic_dissemination_ppd7_excluded_final_E14
+
+#ANCOM of GDM by uterine dissemination status, on E14
+qiime feature-table filter-samples \
+--i-table Output_final/ANCOM_filtered-table_GDM_group_exclude_ppd7_genus_level_gestationalTP_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Gestation_day]='14' " \
+--o-filtered-table Output_final/Filtered_tables/ANCOM_filtered-table_GDM_exclude_ppd7_genus_level_E14_final.qza
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_GDM_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column fetal_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_GDM_genus_fetal_systemic_dissemination_ppd7_excluded_final_E14
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_GDM_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_GDM_genus_offspring_systemic_dissemination_ppd7_excluded_final_E14
+
+#ANCOM of E14 in controls and GDM from only pup outcomes experiments, compare offspring invasive disease vs not
+#to do this, filter out pup outcomes samples and then run 
+#bacillus, Neisseria and haemophilus are ANCOM hits 
+qiime feature-table filter-samples \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--p-where "[pup_outcomes_exp]='Y' " \
+--o-filtered-table Output_final/Filtered_tables/ANCOM_filtered-table_pup_outcomes_group_exclude_ppd7_genus_level_E14_final.qza
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_pup_outcomes_group_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_genus_pup_outcomes_group_offspring_systemic_dissemination_ppd7_excluded_final_E14
+
+qiime feature-table filter-samples \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_Pregnant_Cohort_group_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--p-where "[pup_outcomes_exp]='N' " \
+--o-filtered-table Output_final/Filtered_tables/ANCOM_filtered-table_in_utero_group_exclude_ppd7_genus_level_E14_final.qza
+
+qiime composition ancom \
+--i-table Output_final/Filtered_tables/ANCOM_filtered-table_in_utero_group_exclude_ppd7_genus_level_E14_final.qza \
+--m-metadata-file GDM_metadata_dissemination_2023.txt \
+--m-metadata-column offspring_systemic_dissemination \
+--o-visualization Visualization_final/ANCOM_genus_in_utero_group_offspring_systemic_dissemination_ppd7_excluded_final_E14
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#pairwise differences lactobacillus, enterococcus, staphylococcus, streptococcus 
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Bacillales;f__Staphylococcaceae;g__Staphylococcus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 14 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Staphylococcus_BC_Dayminus1_d14_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Lactobacillaceae;g__Lactobacillus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 14 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Lactobacillus_BC_Dayminus1_d14_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 14 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_Dayminus1_d14_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Streptococcaceae;g__Streptococcus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 14 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Streptococcus_BC_Dayminus1_d14_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Enterobacteriales;f__Enterobacteriaceae;__" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 14 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterobacteriaceae_BC_Dayminus1_d14_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 2 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_Dayminus1_d2_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 -1 \
+--p-state-2 2 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_Dayminus1_d2_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day \
+--p-state-1 -7 \
+--p-state-2 5 \
+--p-individual-id-column Mouse \
+--p-group-column Group \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_Dayminus7_d5_grouped_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day \
+--p-state-1 5 \
+--p-state-2 -1 \
+--p-individual-id-column Mouse \
+--p-group-column Group \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_Dayminus1_d5_grouped_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day_NP \
+--p-state-1 5 \
+--p-state-2 2 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_d5_d2_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Enterococcaceae;g__Enterococcus" \
+--p-state-column Gestation_day \
+--p-state-1 5 \
+--p-state-2 2 \
+--p-individual-id-column Mouse \
+--p-group-column Group \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterococcus_BC_d5_d2_groups_final
+
+qiime longitudinal pairwise-differences \
+--i-table Output_final/filt_collapsedtaxa_genus_relfreq_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-metric "k__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Enterobacteriales;f__Enterobacteriaceae;__" \
+--p-state-column Gestation_day_NP \
+--p-state-1 2 \
+--p-state-2 5 \
+--p-individual-id-column Mouse \
+--p-group-column Diet \
+--p-no-parametric False \
+--o-visualization Visualization_final/Pairwise_differences_Enterobacteriaceae_BC_d2_d5_final
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%VOLATILITY ANALYSES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#with ppd7 included 
+#volatility by gesation timepoint
+qiime longitudinal feature-volatility \
+--i-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-state-column Gestation_day_numeric \
+--p-individual-id-column Mouse \
+--output-dir Volatility_pregnant_cohort_final_final
+
+qiime longitudinal plot-feature-volatility \
+--i-table Output_final/GDM_allexp_relfreq_final.qza \
+--i-importances Volatility_pregnant_cohort_final_final/feature_importance.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-state-column Gestation_day_numeric \
+--p-missing-samples ignore \
+--output-dir Volatility_pregnant_cohort_plot_final_final
+
+#with ppd7 excluded 
+qiime feature-table filter-samples \
+--i-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[postpartum_TP]='peripartum'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_ppd7_exlcuded_final.qza
+
+qiime feature-table filter-samples \
+--i-table Output_final/GDM_allexp_relfreq_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[postpartum_TP]='peripartum'" \
+--o-filtered-table Output_final/Filtered_tables/GDM_relfreq_filtered_table_ppd7_exlcuded_final.qza
+
+# UP TO HERE 5.11.23 RE-RUN AFTER ADDING CATEGORICAL CAGE TO METADATA 
+qiime longitudinal feature-volatility \
+--i-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_ppd7_exlcuded_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp_for_volatility.txt \
+--p-state-column Gestation_day_numeric \
+--p-individual-id-column Mouse \
+--output-dir Volatility_pregnant_cohort_ppd7_excluded_final_final
+
+qiime longitudinal plot-feature-volatility \
+--i-table Output_final/Filtered_tables/GDM_relfreq_filtered_table_ppd7_exlcuded_final.qza \
+--i-importances Volatility_pregnant_cohort_ppd7_excluded_final_final/feature_importance.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp_for_volatility.txt \
+--p-state-column Gestation_day_numeric \
+--p-missing-samples ignore \
+--output-dir Volatility_pregnant_cohort_plot_ppd7_excluded_final_final
+
+qiime longitudinal feature-volatility \
+--i-table Output_final/Filtered_tables/filtfeat_table_pregnant_cohort_ppd7_exlcuded_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp_for_volatility.txt \
+--p-state-column Gestation_day_numeric \
+--p-individual-id-column Mouse \
+--output-dir Volatility_pregnant_cohort_ppd7_excluded_final_final
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Nonpregnant control analyses%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#BC first distances for all NP samples...will use for NP -1, 5, 14 TPs
+
+#nonpregnant controls 
+qiime diversity filter-distance-matrix \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant control'" \
+--o-filtered-distance-matrix Output_final/Filtered_tables/BCDmatrix_allexp_NP_control_group_final.qza
+
+#nonpregnant HFHS 
+qiime diversity filter-distance-matrix \
+--i-distance-matrix Output_final/GDM_BCDmatrix_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant HFHS'" \
+--o-filtered-distance-matrix Output_final/Filtered_tables/BCDmatrix_allexp_NP_HFHS_group_final.qza
+
+qiime longitudinal first-distances \
+--i-distance-matrix Output_final/Filtered_tables/BCDmatrix_allexp_NP_control_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-state-column Timepoint \
+--p-individual-id-column Mouse \
+--p-replicate-handling error \
+--o-first-distances Output_final/NP_controls_allexp_BC_FirstDistances_final 
+
+qiime tools export \
+--input-path Output_final/NP_controls_allexp_BC_FirstDistances_final.qza \
+--output-path Exported_final/NP_controls_allexp_BC_FirstDistances_final
+
+qiime longitudinal first-distances \
+--i-distance-matrix Output_final/Filtered_tables/BCDmatrix_allexp_NP_HFHS_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-state-column Timepoint \
+--p-individual-id-column Mouse \
+--p-replicate-handling error \
+--o-first-distances Output_final/NP_HFHS_allexp_BC_FirstDistances_final 
+
+qiime tools export \
+--input-path Output_final/NP_HFHS_allexp_BC_FirstDistances_final.qza \
+--output-path Exported_final/NP_HFHS_allexp_BC_FirstDistances_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/Filtered_tables/BCDmatrix_allexp_NP_control_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp_forBCD_NP.txt \
+--m-metadata-column NP_3TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_TP_permanova_NP_control_group_allexp_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/Filtered_tables/BCDmatrix_allexp_NP_HFHS_group_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp_forBCD_NP.txt \
+--m-metadata-column NP_3TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_TP_permanova_NP_HFHS_group_allexp_final
+
+#nonpregnant controls 
+qiime feature-table filter-samples \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant control'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_NP_control_group_final.qza
+
+#nonpregnant HFHS 
+qiime feature-table filter-samples \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group]='nonpregnant HFHS'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_NP_HFHS_group_final.qza
+
+#nonpregnant cohort 
+qiime feature-table filter-samples \
+--i-table Exported_final/filtfeat_table_GDM_allexp_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-where "[Group_2]='nonpregnant_cohort'" \
+--o-filtered-table Output_final/Filtered_tables/filtfeat_table_nonpregnant_cohort_final.qza
+
+qiime diversity beta \
+--i-table Output_final/Filtered_tables/filtfeat_table_nonpregnant_cohort_final.qza \
+--p-metric braycurtis \
+--p-pseudocount 1 \
+--p-n-jobs 1 \
+--o-distance-matrix Output_final/BCDmatrix_nonpregnant_cohort_final.qza
+
+qiime diversity beta-group-significance \
+--i-distance-matrix  Output_final/BCDmatrix_nonpregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column TP \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_TP_permanova_nonpregnant_cohort_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_nonpregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp_batch.txt \
+--m-metadata-column Cage_categorical \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_cage_effects_permanova_nonpregnant_cohort_final
+
+qiime diversity beta-group-significance \
+--i-distance-matrix Output_final/BCDmatrix_nonpregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-metadata-column Diet \
+--p-method permanova \
+--p-pairwise True \
+--p-permutations 999 \
+--o-visualization Visualization_final/Beta_diversity_Diet_permanova_nonpregnant_cohort_final
+
+qiime diversity pcoa \
+--i-distance-matrix Output_final/BCDmatrix_nonpregnant_cohort_final.qza \
+--p-number-of-dimensions 3 \
+--o-pcoa Output_final/GDM_PCoA_BCD_nonpregnant_cohort_final
+
+qiime emperor plot \
+--i-pcoa Output_final/GDM_PCoA_BCD_nonpregnant_cohort_final.qza \
+--m-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--p-ignore-missing-samples False \
+--o-visualization Visualization_final/GDM_Emperor_BCD_nonpregnant_cohort_final
+
+qiime feature-table relative-frequency \
+--i-table Output_final/Filtered_tables/filtfeat_table_nonpregnant_cohort_final.qza \
+--o-relative-frequency-table Output_final/GDM_relfreq_nonpregnant_cohort_final
+
+qiime diversity pcoa-biplot \
+--i-pcoa Output_final/GDM_PCoA_BCD_nonpregnant_cohort_final.qza \
+--i-features Output_final/GDM_relfreq_nonpregnant_cohort_final.qza \
+--o-biplot Output_final/GDM_BCD_biplot_nonpregnant_cohort_final
+
+qiime emperor biplot \
+--i-biplot Output_final/GDM_BCD_biplot_nonpregnant_cohort_final.qza \
+--m-sample-metadata-file GDM_metadata_samples_noPBS_allexp.txt \
+--m-feature-metadata-file taxonomy_GDM_allexp_final.qza \
+--o-visualization Visualization_final/GDM_PCoA_BCD_Emperor_biplot_nonpregnant_cohort_final
